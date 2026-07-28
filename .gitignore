@@ -1,0 +1,9 @@
+# Minutely 런타임 상태 (스냅샷·전사 임시파일) — 커밋하지 않음
+.minutely/
+
+# 로컬 시크릿
+.env
+
+# Python
+__pycache__/
+*.pyc
