@@ -26,7 +26,8 @@ description: >-
 - 감시 페이지 `C조_한컴`: `3aabdeac-d0b4-804d-a1c2-dfc339401282`
 - **경로 A 출력**: "노션 변경 내용 정리 (Claude 전용)" 페이지 `3abbdeac-d0b4-802e-be23-f0a4c4f131e0`
 - **경로 B 출력**: 회의록 DB `collection://c5bbdeac-d0b4-8333-bba6-07d1ccebfcfb`
-  - 속성: `회의명`(title) · `날짜`(date) · `내용`(text) · `상태`(select: 진행 예정/진행 중/완료)
+  - 속성: `회의명`(title) · `날짜`(date) · `내용`(text, 간략 요약) · `상태`(select: 진행 예정/진행 중/완료)
+  - 회의 전체 내용은 페이지 본문에 작성 (B2 참고)
 - **소스 DB (변화 감시)** 5개: `ee9bdeac-d0b4-83f2-a974-079e24493877`, `949bdeac-d0b4-8273-a20e-07bd8585adad`,
   `533bdeac-d0b4-825b-b53a-87ceec15f904`, `2e1bdeac-d0b4-82a1-bdd8-87f9ca7d2a93`, `6f6bdeac-d0b4-82b8-97f9-87eb00fdd2c4`
 - **diff 제외** (피드백 루프 방지): 회의록 `c5bb…`, 데일리 스크럼 `a79bdeac-d0b4-83b2-8ace-077993a8dd69`
@@ -96,13 +97,16 @@ python "$CLAUDE_PLUGIN_ROOT/skills/minutely/scripts/snapshot.py" promote --curre
 - 확장자가 텍스트(`.txt .md`)이면 파일을 그대로 읽습니다(전사 불필요).
 
 ### B2. 요약 → 회의록 양식
-전사문/텍스트를 **회의록** 양식으로 요약: `회의명` · `날짜`(파일/사용자 지정 또는 오늘) ·
-`내용`(안건·논의·결정·액션아이템, 기존 회의록의 `·` 불릿 스타일) · `상태`.
+전사문/텍스트를 **회의록** 양식으로 정리하되, 아래 두 부분을 분리합니다:
+- **본문**(`content`, 페이지 body): 안건·논의·결정·액션아이템 전체를 기존 회의록의 `·` 불릿 스타일로.
+- `내용` **속성**(text): 본문을 1~3줄로 압축한 간략 요약.
+그 외 `회의명` · `날짜`(파일/사용자 지정 또는 오늘) · `상태`.
 초안 전에 회의록 DB 최신 몇 행을 읽어 문체를 맞추세요.
 
 ### B3. 확인 후 쓰기
 - 승인 시에만 `notion-create-pages`로 회의록 DB(`collection://c5bbdeac-d0b4-8333-bba6-07d1ccebfcfb`)에
-  **새 행** 생성. 쓰기 전 같은 날짜/제목 행이 있는지 `notion-query-data-sources`로 확인(중복 방지).
+  **새 행** 생성. `content`에 본문 전체, `properties.내용`에 간략 요약을 넣습니다.
+  쓰기 전 같은 날짜/제목 행이 있는지 `notion-query-data-sources`로 확인(중복 방지).
 - 승인 안 하면 수정 반영해 다시 보여주세요.
 
 ---
