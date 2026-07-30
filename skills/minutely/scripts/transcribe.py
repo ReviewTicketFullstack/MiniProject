@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""회의 음성 녹음 → OpenAI Whisper 전사. 표준 라이브러리만 사용.
+"""회의 음성 녹음 → OpenAI Whisper 또는 Gemini 전사. 표준 라이브러리만 사용.
 
-흐름: ffmpeg로 mono 16kHz mp3 추출 → (25MB 초과 시 시간 균등 분할) → OpenAI Whisper API
-업로드 → 세그먼트 텍스트를 이어붙여 표준출력으로 반환. 실패는 SystemExit 메시지로 안내.
+흐름: ffmpeg로 mono 16kHz mp3 추출 → (25MB 초과 시 시간 균등 분할) → API 업로드
+→ 텍스트를 이어붙여 표준출력으로 반환. 실패는 SystemExit 메시지로 안내.
+GEMINI_API_KEY가 있으면 Gemini, 없으면 OPENAI_API_KEY로 Whisper를 쓴다.
 
 watch 플러그인의 whisper.py를 OpenAI 전용으로 슬림화해 적응.
 """
 from __future__ import annotations
 
+import base64
 import io
 import json
 import math
@@ -23,10 +25,12 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from config import load_openai_key  # noqa: E402
+from config import load_gemini_key, load_openai_key  # noqa: E402
 
 OPENAI_ENDPOINT = "https://api.openai.com/v1/audio/transcriptions"
 OPENAI_MODEL = "whisper-1"
+GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent"
+GEMINI_PROMPT = "이 오디오를 그대로 받아써줘. 화자 구분이나 요약 없이 실제로 말한 내용만 이어서 적어줘."
 MAX_UPLOAD_BYTES = 24 * 1024 * 1024  # 25MB 한도 아래 여유
 
 MAX_ATTEMPTS = 4
@@ -176,6 +180,58 @@ def _post_whisper(api_key: str, audio_path: Path) -> dict:
     raise SystemExit(f"Whisper 요청이 {MAX_ATTEMPTS}회 모두 실패: {last_exc}{last_detail}")
 
 
+def _post_gemini(api_key: str, audio_path: Path) -> str:
+    # extract_audio/split_audio는 항상 mp3로 인코딩한다 — mimetypes.guess_type의 "audio/mpeg"는
+    # Gemini가 인식하지 못해 오디오를 조용히 무시하므로 "audio/mp3"로 고정한다.
+    body = json.dumps({
+        "contents": [{
+            "parts": [
+                {"text": GEMINI_PROMPT},
+                {"inline_data": {"mime_type": "audio/mp3", "data": base64.b64encode(audio_path.read_bytes()).decode()}},
+            ]
+        }]
+    }).encode()
+    headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
+    context = ssl.create_default_context()
+    rate_limit_hits = 0
+    last_exc = None
+    last_detail = ""
+    for attempt in range(MAX_ATTEMPTS):
+        request = Request(GEMINI_ENDPOINT, data=body, headers=headers, method="POST")
+        try:
+            with urlopen(request, timeout=300, context=context) as response:
+                payload = json.loads(response.read().decode("utf-8", errors="replace"))
+        except urllib.error.HTTPError as exc:
+            detail = _read_error_body(exc)
+            last_exc, last_detail = exc, detail
+            if 400 <= exc.code < 500 and exc.code != 429:
+                raise SystemExit(f"Gemini 요청 실패: {exc}{detail}")
+            if exc.code == 429:
+                rate_limit_hits += 1
+                if rate_limit_hits >= MAX_429_RETRIES:
+                    raise SystemExit(f"Gemini 요청 실패(429): {exc}{detail}")
+                delay = RETRY_BASE_DELAY * (2 ** attempt) + 1
+            else:
+                delay = RETRY_BASE_DELAY * (2 ** attempt)
+            if attempt < MAX_ATTEMPTS - 1:
+                print(f"[minutely] gemini HTTP {exc.code} — {delay:.1f}s 후 재시도", file=sys.stderr)
+                time.sleep(delay)
+            continue
+        except (urllib.error.URLError, TimeoutError, ConnectionResetError, OSError) as exc:
+            last_exc, last_detail = exc, ""
+            if attempt < MAX_ATTEMPTS - 1:
+                delay = RETRY_BASE_DELAY * (attempt + 1)
+                print(f"[minutely] gemini 네트워크 오류 — {delay:.1f}s 후 재시도", file=sys.stderr)
+                time.sleep(delay)
+            continue
+        try:
+            parts = payload["candidates"][0]["content"]["parts"]
+            return "".join(p.get("text", "") for p in parts).strip()
+        except (KeyError, IndexError) as exc:
+            raise SystemExit(f"Gemini 응답 형식이 예상과 다름: {exc}: {json.dumps(payload)[:200]}")
+    raise SystemExit(f"Gemini 요청이 {MAX_ATTEMPTS}회 모두 실패: {last_exc}{last_detail}")
+
+
 def _segments_text(data: dict) -> str:
     segs = data.get("segments") or []
     parts = [(s.get("text") or "").strip() for s in segs]
@@ -186,26 +242,34 @@ def _segments_text(data: dict) -> str:
 
 
 def transcribe(source: str, work_dir: Path) -> str:
-    api_key = load_openai_key()
+    gemini_key = load_gemini_key()
+    provider = "gemini" if gemini_key else "openai"
+    api_key = gemini_key if provider == "gemini" else load_openai_key()
     if not api_key:
         raise SystemExit(
-            "OPENAI_API_KEY가 없습니다. 환경변수나 ./.env, ~/.config/minutely/.env에 설정하세요."
+            "GEMINI_API_KEY 또는 OPENAI_API_KEY가 없습니다. 환경변수나 ./.env, ~/.config/minutely/.env에 설정하세요."
         )
+
+    def _post(chunk: Path) -> str:
+        if provider == "gemini":
+            return _post_gemini(api_key, chunk)
+        return _segments_text(_post_whisper(api_key, chunk))
+
     audio = extract_audio(source, work_dir / "audio.mp3")
     size = audio.stat().st_size
     if size <= MAX_UPLOAD_BYTES:
-        print(f"[minutely] 오디오 {size/1024:.0f}kB — Whisper 업로드…", file=sys.stderr)
-        return _segments_text(_post_whisper(api_key, audio))
+        print(f"[minutely] 오디오 {size/1024:.0f}kB — {provider} 업로드…", file=sys.stderr)
+        return _post(audio)
 
     duration = audio_duration(audio)
     plan = plan_chunks(duration, size)
-    print(f"[minutely] {size/(1024*1024):.0f}MB — {len(plan)}개 청크로 분할 전사…", file=sys.stderr)
+    print(f"[minutely] {size/(1024*1024):.0f}MB — {len(plan)}개 청크로 분할 전사({provider})…", file=sys.stderr)
     chunks = split_audio(audio, work_dir / "chunks", plan)
     texts = []
     failures = 0
     for i, chunk in enumerate(chunks):
         try:
-            texts.append(_segments_text(_post_whisper(api_key, chunk)))
+            texts.append(_post(chunk))
         except SystemExit as exc:
             failures += 1
             print(f"[minutely] 청크 {i+1}/{len(chunks)} 실패 — 건너뜀 ({exc})", file=sys.stderr)

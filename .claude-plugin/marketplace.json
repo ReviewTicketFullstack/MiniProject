@@ -10,7 +10,7 @@
   "plugins": [
     {
       "name": "minutely",
-      "description": "Notion 'C조_한컴' 페이지 변화를 스냅샷 diff로 감지해 회의록·데일리 스크럼 DB 양식에 초안을 만들고 확인 후 기록. 회의 음성은 Whisper API로 전사·요약.",
+      "description": "Notion 'C조_한컴' 페이지 변화를 스냅샷 diff로 감지해 회의록·데일리 스크럼 DB 양식에 초안을 만들고 확인 후 기록. 회의 음성은 Gemini 또는 Whisper API로 전사·요약.",
       "source": "./",
       "category": "productivity"
     }

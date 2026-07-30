@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Minutely 공용 설정 — Notion 대상 id 상수 + OPENAI_API_KEY 로드."""
+"""Minutely 공용 설정 — Notion 대상 id 상수 + OPENAI_API_KEY/GEMINI_API_KEY 로드."""
 from __future__ import annotations
 
 import os
@@ -63,6 +63,18 @@ def load_openai_key() -> str | None:
         return env.strip()
     for path in DOTENV_PATHS:
         value = _from_dotenv(path, "OPENAI_API_KEY")
+        if value:
+            return value
+    return None
+
+
+def load_gemini_key() -> str | None:
+    """환경변수 → cwd/.env → ~/.config/minutely/.env 순으로 GEMINI_API_KEY 탐색."""
+    env = os.environ.get("GEMINI_API_KEY")
+    if env and env.strip():
+        return env.strip()
+    for path in DOTENV_PATHS:
+        value = _from_dotenv(path, "GEMINI_API_KEY")
         if value:
             return value
     return None

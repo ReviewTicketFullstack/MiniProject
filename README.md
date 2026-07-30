@@ -31,13 +31,13 @@ C조_한컴 프로젝트를 위한 Claude Code 플러그인. 두 가지를 합�
 > 다음 실행에서 "변화"로 잡히는 피드백 루프를 막기 위함입니다.
 
 **경로 B**
-1. 오디오/영상이면 `transcribe.py`(ffmpeg → OpenAI Whisper)로 전사, 텍스트 파일이면 그대로 읽기.
+1. 오디오/영상이면 `transcribe.py`(ffmpeg → Gemini 또는 OpenAI Whisper)로 전사, 텍스트 파일이면 그대로 읽기.
 2. 회의록 양식(회의명·날짜·내용·상태)으로 요약 → 승인 시 회의록 DB에 새 행 생성.
 
 ## 사전 준비
 
 - **Notion MCP 커넥터** 연결 (필수).
-- 경로 B 음성만: `OPENAI_API_KEY`(`.env` 또는 환경변수) + `ffmpeg`. 텍스트 파일은 불필요.
+- 경로 B 음성만: `GEMINI_API_KEY` 또는 `OPENAI_API_KEY`(`.env` 또는 환경변수) + `ffmpeg`. 둘 다 있으면 Gemini 우선. 텍스트 파일은 불필요.
 
 ## 상태 파일 (git 제외)
 
@@ -70,7 +70,7 @@ skills/minutely/SKILL.md        전체 절차
 skills/minutely/scripts/
   snapshot.py                   소스 DB 행 스냅샷·diff
   pagediff.py                   페이지 산문 dump 비교
-  transcribe.py                 오디오 → Whisper 전사
-  config.py                     Notion id 상수 + OPENAI_API_KEY 로드
+  transcribe.py                 오디오 → Gemini/Whisper 전사
+  config.py                     Notion id 상수 + OPENAI_API_KEY/GEMINI_API_KEY 로드
   tests/test_snapshot.py        diff 유닛테스트
 ```
