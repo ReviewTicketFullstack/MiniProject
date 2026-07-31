@@ -19,7 +19,8 @@ description: >-
 
 - **Notion MCP 커넥터** 연결 필수. `notion-fetch id:"self"`로 확인, 미연결이면 안내 후 중단.
 - 경로 B 음성만: `GEMINI_API_KEY` 또는 `OPENAI_API_KEY`(`.env`/환경변수) + `ffmpeg`. 둘 다 있으면 Gemini 우선.
-  텍스트 파일은 불필요.
+  둘 다 없으면 로컬 Whisper(`pip install faster-whisper`, 계정·과금 불필요)로 자동 폴백 — 대신 느리고
+  정확도가 클라우드보다 떨어짐. 텍스트 파일은 불필요.
 - 스크립트: `$CLAUDE_PLUGIN_ROOT/skills/minutely/scripts/` (config.py에 아래 id 상수 동일).
 
 ## 고정 대상 (config.py와 동일)

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""회의 음성 녹음 → OpenAI Whisper 또는 Gemini 전사. 표준 라이브러리만 사용.
+"""회의 음성 녹음 → Gemini/OpenAI Whisper/로컬 Whisper 전사. 표준 라이브러리만 사용
+(로컬 전사만 예외적으로 faster-whisper 패키지 필요).
 
-흐름: ffmpeg로 mono 16kHz mp3 추출 → (25MB 초과 시 시간 균등 분할) → API 업로드
+흐름: ffmpeg로 mono 16kHz mp3 추출 → (25MB 초과 시 시간 균등 분할) → 업로드/로컬 추론
 → 텍스트를 이어붙여 표준출력으로 반환. 실패는 SystemExit 메시지로 안내.
-GEMINI_API_KEY가 있으면 Gemini, 없으면 OPENAI_API_KEY로 Whisper를 쓴다.
+provider 우선순위: GEMINI_API_KEY 있으면 Gemini → 없고 OPENAI_API_KEY 있으면 Whisper API
+→ 둘 다 없으면 로컬 Whisper(faster-whisper, 계정/과금 불필요, 대신 느리고 정확도 낮음)로 폴백.
 
 watch 플러그인의 whisper.py를 OpenAI 전용으로 슬림화해 적응.
 """
@@ -14,6 +16,7 @@ import io
 import json
 import math
 import mimetypes
+import os
 import shutil
 import ssl
 import subprocess
@@ -27,6 +30,9 @@ from urllib.request import Request, urlopen
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from config import load_gemini_key, load_openai_key  # noqa: E402
 
+# anaconda 환경 등에서 torch/ctranslate2가 OpenMP 런타임을 중복 로드해 죽는 문제 회피.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 OPENAI_ENDPOINT = "https://api.openai.com/v1/audio/transcriptions"
 OPENAI_MODEL = "whisper-1"
 GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent"
@@ -36,6 +42,9 @@ MAX_UPLOAD_BYTES = 24 * 1024 * 1024  # 25MB 한도 아래 여유
 MAX_ATTEMPTS = 4
 MAX_429_RETRIES = 2
 RETRY_BASE_DELAY = 2.0
+
+LOCAL_WHISPER_MODEL = "medium"  # small은 다화자 한국어 회의에서 오류가 너무 많아 medium 사용
+_local_model = None
 
 
 def _require(tool: str) -> None:
@@ -232,6 +241,26 @@ def _post_gemini(api_key: str, audio_path: Path) -> str:
     raise SystemExit(f"Gemini 요청이 {MAX_ATTEMPTS}회 모두 실패: {last_exc}{last_detail}")
 
 
+def _load_local_model():
+    global _local_model
+    if _local_model is None:
+        try:
+            from faster_whisper import WhisperModel
+        except ImportError:
+            raise SystemExit(
+                "로컬 Whisper 폴백을 쓰려면 faster-whisper 설치가 필요합니다: pip install faster-whisper"
+            )
+        print(f"[minutely] 로컬 Whisper({LOCAL_WHISPER_MODEL}) 모델 로드 중…", file=sys.stderr)
+        _local_model = WhisperModel(LOCAL_WHISPER_MODEL, device="cpu", compute_type="int8")
+    return _local_model
+
+
+def _post_local(audio_path: Path) -> str:
+    model = _load_local_model()
+    segments, _info = model.transcribe(str(audio_path), language="ko", beam_size=5)
+    return " ".join(seg.text.strip() for seg in segments if seg.text.strip())
+
+
 def _segments_text(data: dict) -> str:
     segs = data.get("segments") or []
     parts = [(s.get("text") or "").strip() for s in segs]
@@ -243,17 +272,25 @@ def _segments_text(data: dict) -> str:
 
 def transcribe(source: str, work_dir: Path) -> str:
     gemini_key = load_gemini_key()
-    provider = "gemini" if gemini_key else "openai"
-    api_key = gemini_key if provider == "gemini" else load_openai_key()
-    if not api_key:
-        raise SystemExit(
-            "GEMINI_API_KEY 또는 OPENAI_API_KEY가 없습니다. 환경변수나 ./.env, ~/.config/minutely/.env에 설정하세요."
+    openai_key = load_openai_key()
+    if gemini_key:
+        provider, api_key = "gemini", gemini_key
+    elif openai_key:
+        provider, api_key = "openai", openai_key
+    else:
+        provider, api_key = "local", None
+        print(
+            "[minutely] GEMINI_API_KEY/OPENAI_API_KEY 없음 — 로컬 Whisper(faster-whisper)로 폴백"
+            " (계정·과금 불필요, 대신 느리고 정확도 낮음)",
+            file=sys.stderr,
         )
 
     def _post(chunk: Path) -> str:
         if provider == "gemini":
             return _post_gemini(api_key, chunk)
-        return _segments_text(_post_whisper(api_key, chunk))
+        if provider == "openai":
+            return _segments_text(_post_whisper(api_key, chunk))
+        return _post_local(chunk)
 
     audio = extract_audio(source, work_dir / "audio.mp3")
     size = audio.stat().st_size
