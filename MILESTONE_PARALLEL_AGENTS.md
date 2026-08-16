@@ -441,10 +441,12 @@ All failure cases preserved in evidence for investigation.
 ### Scalability
 
 The current parallel architecture supports:
-- **Current:** 2 agents concurrently
-- **Can scale to:** N agents concurrently (tested with 2)
-- **Bottleneck:** Claude Code agent capacity (not tested)
-- **Isolation:** Proven reliable with 2; expected to hold for more
+- **Minimum:** 1 agent (single-agent mode)
+- **Default:** 3 agents concurrently
+- **Maximum:** 3 agents concurrently
+- **Beyond 3:** Not supported (would require architectural redesign)
+- **Current Test:** 2 agents concurrently (within limits)
+- **Isolation:** Proven reliable with 2; design capacity extends to 3
 
 ---
 
