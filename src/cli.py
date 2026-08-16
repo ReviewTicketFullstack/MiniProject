@@ -89,6 +89,23 @@ def main():
         help="Scenario ID to run (default: interactive selection)",
     )
     parser.add_argument(
+        "--phase",
+        type=str,
+        choices=["setup", "measure", "full"],
+        default="full",
+        help="Execution phase: setup (create worktree), measure (run verification), or full (both)",
+    )
+    parser.add_argument(
+        "--worktree-path",
+        type=Path,
+        help="Path to existing worktree (used with --phase measure)",
+    )
+    parser.add_argument(
+        "--base-commit",
+        type=str,
+        help="Base commit for measurement (used with --phase measure)",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Validate setup without executing experiment",
@@ -123,26 +140,50 @@ def main():
 
         scenario = get_scenario_by_id(scenarios, scenario_id)
 
-        if not args.dry_run:
-            if not confirm_experiment(args.repo_path, scenario):
-                print("Experiment cancelled.")
-                return 0
-        else:
-            print("DRY RUN MODE - Skipping confirmation")
-            print()
+        if args.phase in ("setup", "full"):
+            # Skip confirmation if running in phase mode (orchestrated by skill)
+            # or in dry-run mode
+            if args.phase == "full" and not args.dry_run:
+                if not confirm_experiment(args.repo_path, scenario):
+                    print("Experiment cancelled.")
+                    return 0
+            elif args.dry_run:
+                print("DRY RUN MODE - Skipping confirmation")
+                print()
 
-        print("")
-        print("Starting experiment...")
-        print("")
+            print("")
+            print("Starting experiment...")
+            print("")
 
-        harness = Harness(
-            repo_path=str(args.repo_path),
-            scenario_id=scenario["id"],
-            scenario_name=scenario["name"],
-            results_dir=str(results_dir),
-        )
+            harness = Harness(
+                repo_path=str(args.repo_path),
+                scenario_id=scenario["id"],
+                scenario_name=scenario["name"],
+                results_dir=str(results_dir),
+            )
 
-        result = harness.run(dry_run=args.dry_run)
+            if args.phase == "setup":
+                result = harness.setup()
+            else:  # full
+                result = harness.run(dry_run=args.dry_run)
+        else:  # measure
+            if not args.worktree_path or not args.base_commit:
+                print("Error: --measure phase requires --worktree-path and --base-commit")
+                return 1
+
+            harness = Harness(
+                repo_path=str(args.repo_path),
+                scenario_id=scenario["id"] if scenario else "unknown",
+                scenario_name=scenario["name"] if scenario else "Unknown",
+                results_dir=str(results_dir),
+            )
+            harness.worktree = __import__("src.worktree", fromlist=["Worktree"]).Worktree(
+                str(args.repo_path), scenario["id"] if scenario else "unknown"
+            )
+            harness.worktree.worktree_path = args.worktree_path
+            harness.base_commit = args.base_commit
+
+            result = harness.measure_and_report()
 
         print("")
         print("=" * 60)
@@ -150,7 +191,7 @@ def main():
         print("=" * 60)
         print("")
 
-        if result["status"] in ("success", "dry_run_success"):
+        if result["status"] in ("success", "dry_run_success", "setup_complete"):
             if result["status"] == "success":
                 print(f"Status:           Completed")
                 print(f"Files changed:    {result['files_changed']}")
@@ -161,6 +202,10 @@ def main():
                 print(f"Results JSON:     {result['results_json']}")
                 print(f"Results Markdown: {result['results_markdown']}")
                 print(f"Results Diff:     {result['results_diff']}")
+            elif result["status"] == "setup_complete":
+                print(f"Status:           Setup complete")
+                print(f"Worktree:         {result['worktree_path']}")
+                print(f"Base commit:      {result['base_commit']}")
             else:
                 print(f"Status:           Dry run successful (setup validated)")
             return 0
