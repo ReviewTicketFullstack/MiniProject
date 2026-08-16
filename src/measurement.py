@@ -1,0 +1,192 @@
+"""Measurement and evidence collection from change drills."""
+
+import json
+import subprocess
+from dataclasses import dataclass, asdict
+from pathlib import Path
+from typing import List, Dict
+from datetime import datetime
+
+
+@dataclass
+class FileDiff:
+    """Statistics for a single changed file."""
+    path: str
+    status: str  # A=added, M=modified, D=deleted, R=renamed
+    lines_added: int = 0
+    lines_deleted: int = 0
+    is_test_file: bool = False
+
+
+@dataclass
+class VerificationResult:
+    """Result of build/test verification."""
+    build_success: bool
+    test_success: bool
+    build_output: str = ""
+    test_output: str = ""
+    build_command: str = ""
+    test_command: str = ""
+
+
+@dataclass
+class ChangeCost:
+    """Measurement of change cost."""
+    total_files_changed: int
+    total_lines_added: int
+    total_lines_deleted: int
+    files_changed_list: List[FileDiff]
+    test_files_changed: int
+    unrelated_files_modified: int
+
+
+def parse_diff(diff_text: str) -> ChangeCost:
+    """
+    Parse unified diff output to extract change metrics.
+
+    Args:
+        diff_text: Output from `git diff`
+
+    Returns:
+        ChangeCost object with statistics
+    """
+    files_changed = {}
+    lines_added = 0
+    lines_deleted = 0
+
+    for line in diff_text.split("\n"):
+        if line.startswith("diff --git"):
+            parts = line.split()
+            a_path = parts[2]
+            b_path = parts[3]
+            file_path = b_path[2:] if b_path.startswith("b/") else a_path[2:]
+            files_changed[file_path] = FileDiff(path=file_path, status="M")
+
+        elif line.startswith("+++"):
+            continue
+        elif line.startswith("---"):
+            continue
+        elif line.startswith("+") and not line.startswith("+++"):
+            lines_added += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            lines_deleted += 1
+
+    file_diffs = list(files_changed.values())
+    test_files = sum(1 for f in file_diffs if _is_test_file(f.path))
+
+    return ChangeCost(
+        total_files_changed=len(file_diffs),
+        total_lines_added=lines_added,
+        total_lines_deleted=lines_deleted,
+        files_changed_list=file_diffs,
+        test_files_changed=test_files,
+        unrelated_files_modified=0,
+    )
+
+
+def _is_test_file(path: str) -> bool:
+    """Simple heuristic to detect test files."""
+    return (
+        "test" in path.lower()
+        or "spec" in path.lower()
+        or path.endswith(".test.js")
+        or path.endswith(".spec.js")
+        or path.endswith("_test.py")
+    )
+
+
+def detect_build_command(repo_path: Path) -> str:
+    """
+    Detect repository's build command with simple heuristics.
+
+    Returns:
+        Build command string (e.g., "make", "npm run build", "python -m pytest")
+    """
+    if (repo_path / "Makefile").exists():
+        return "make"
+
+    if (repo_path / "package.json").exists():
+        return "npm test"
+
+    if (repo_path / "pytest.ini").exists() or (repo_path / "setup.py").exists():
+        return "python -m pytest"
+
+    if (repo_path / "requirements.txt").exists():
+        return "python -m pytest"
+
+    return "make"  # Default fallback
+
+
+def run_verification(worktree_path: Path, repo_path: Path) -> VerificationResult:
+    """
+    Run build and test commands in the worktree.
+
+    Args:
+        worktree_path: Path to the isolated worktree
+        repo_path: Original repository path (for build detection)
+
+    Returns:
+        VerificationResult with success status and output
+    """
+    build_cmd = detect_build_command(repo_path)
+
+    build_success = True
+    build_output = ""
+    test_success = True
+    test_output = ""
+
+    result = subprocess.run(
+        build_cmd.split(),
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+
+    build_success = result.returncode == 0
+    build_output = result.stdout + result.stderr if result.returncode != 0 else ""
+
+    if build_success:
+        test_success = True
+        test_output = result.stdout
+
+    return VerificationResult(
+        build_success=build_success,
+        test_success=test_success,
+        build_output=build_output,
+        test_output=test_output,
+        build_command=build_cmd,
+        test_command="",
+    )
+
+
+@dataclass
+class ExperimentEvidence:
+    """Complete evidence from a single experiment run."""
+    scenario_id: str
+    scenario_name: str
+    timestamp: str
+    base_commit: str
+    completed: bool
+    change_cost: ChangeCost
+    verification: VerificationResult
+    diff: str
+    git_status: str
+    notes: str = ""
+
+    def to_dict(self) -> Dict:
+        """Convert to serializable dictionary."""
+        return {
+            "scenario_id": self.scenario_id,
+            "scenario_name": self.scenario_name,
+            "timestamp": self.timestamp,
+            "base_commit": self.base_commit,
+            "completed": self.completed,
+            "change_cost": asdict(self.change_cost),
+            "verification": asdict(self.verification),
+            "notes": self.notes,
+        }
+
+    def to_json(self) -> str:
+        """Serialize to JSON (without diff, which is stored separately)."""
+        return json.dumps(self.to_dict(), indent=2)

@@ -1,0 +1,32 @@
+{
+  "scenarios": [
+    {
+      "id": "add-cancellation-reason",
+      "name": "Add cancellationReason to Order",
+      "description": "Add a new optional field to the Order domain entity",
+      "objective": "Implement a new domain field across all architectural layers (domain → API → state management → UI)",
+      "prompt": "The Order entity needs a new optional field called 'cancellationReason' (string, nullable). This field should:\n1. Be added to the Order domain model\n2. Be persisted in the database (if applicable)\n3. Be exposed through API endpoints that return orders\n4. Be available in the UI for display\n5. Have appropriate tests\n\nImplement this change end-to-end. If you're uncertain about the exact implementation, look at similar fields and follow the same pattern.",
+      "context": "domain-entity-field",
+      "expected_difficulty": "medium",
+      "success_criteria": [
+        "Code builds successfully",
+        "Tests pass",
+        "The new field is accessible from external API"
+      ]
+    },
+    {
+      "id": "rename-auth-service",
+      "name": "Rename AuthenticationService to IdentityService",
+      "description": "Refactor: rename a core service and update all references",
+      "objective": "Rename AuthenticationService to IdentityService across the entire codebase",
+      "prompt": "Find the AuthenticationService class and rename it to IdentityService. Update all imports, instantiations, type annotations, and configuration references throughout the codebase to use the new name.\n\nDo NOT change the functionality—this is purely a rename operation. Ensure:\n1. All tests still pass\n2. Code builds successfully\n3. No references to the old name remain (except in git history/comments)",
+      "context": "refactoring-rename",
+      "expected_difficulty": "low-to-medium",
+      "success_criteria": [
+        "Code builds successfully",
+        "Tests pass",
+        "No references to 'AuthenticationService' remain in active code"
+      ]
+    }
+  ]
+}

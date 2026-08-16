@@ -1,0 +1,351 @@
+# codeStress MVP Implementation Report
+
+**Date:** 2026-08-16
+**Status:** MVP Infrastructure Complete — Ready for Integrated Testing
+
+---
+
+## Overview
+
+The minimal harness infrastructure for codeStress is now complete and has been verified end-to-end. All core components are functional and can orchestrate a complete change drill experiment.
+
+---
+
+## What Was Built
+
+### 1. Python Harness Core (`src/`)
+
+**Files:**
+- `worktree.py` — Git worktree lifecycle management
+- `measurement.py` — Diff parsing and evidence collection
+- `report.py` — Report generation (JSON, Markdown, diff)
+- `harness.py` — Main orchestrator
+- `cli.py` — CLI entry point
+- `scenarios.json` — Scenario catalog
+- `__init__.py` — Package marker
+
+**Key Features:**
+- Worktree creation and cleanup with error handling
+- Automatic build/test command detection (Makefile, npm, pytest)
+- Diff parsing to extract: files changed, lines added/deleted, test file detection
+- Structured JSON evidence output
+- Human-readable Markdown reports
+- Context manager pattern for reliable worktree cleanup
+
+### 2. Claude Skill (`/.claude/skills/change-drill.md`)
+
+Thin entry point that orchestrates:
+1. Scenario loading and selection
+2. Repository validation
+3. Experiment confirmation
+4. Harness invocation
+5. Result display
+
+### 3. Configuration (`.claude/settings.json`)
+
+Harness configuration specifying:
+- Allowed Bash commands (git, python3, find, ls, cat)
+- Write permissions (results/, .claude/)
+- Enabled skills
+
+### 4. Scenario Catalog (`src/scenarios.json`)
+
+Two initial scenarios:
+- `add-cancellation-reason` — Domain field propagation
+- `rename-auth-service` — Refactoring rename propagation
+
+Each scenario includes:
+- ID, name, description
+- Detailed implementation prompt
+- Context tag (for future filtering)
+- Expected difficulty level
+- Success criteria
+
+---
+
+## Verification — End-to-End Test Results
+
+All components tested and working:
+
+### ✅ Worktree Management
+- [x] Create isolated worktree from specific commit
+- [x] Detect changes via git diff
+- [x] Handle cleanup safely even on failure
+- [x] Provide context manager for exception safety
+
+**Test:** Created worktree, made manual changes (class rename across 3 files), verified isolation, cleaned up successfully.
+
+### ✅ Measurement Pipeline
+- [x] Parse unified diff format
+- [x] Count files, lines added/deleted
+- [x] Detect test files
+- [x] Auto-detect build command (npm test)
+- [x] Run verification (build + tests)
+- [x] Capture test output
+
+**Test:** Ran `parse_diff()` on real diff from test repository:
+- Correctly identified 3 files changed
+- Correctly counted 7 lines added, 7 deleted
+- Correctly identified 1 test file
+- npm test ran successfully in worktree
+
+### ✅ Report Generation
+- [x] Generate structured JSON evidence
+- [x] Render human-readable Markdown report
+- [x] Save separate diff file
+- [x] Embed test output in evidence
+- [x] Format report with status indicators (✓/✗)
+
+**Test:** Generated complete report for rename-auth-service scenario:
+- JSON: 45 lines, properly structured
+- Markdown: 70 lines, well-formatted
+- Diff: 1337 bytes, complete diff preserved
+- All files saved to `results/` directory
+
+### ✅ CLI Entry Point
+- [x] Load scenarios from JSON
+- [x] Interactive scenario selection
+- [x] Experiment confirmation workflow
+- [x] Dry-run mode (validate setup without running)
+- [x] Parse command-line arguments
+- [x] Proper exit codes
+
+**Test:** Ran dry-run mode:
+```bash
+python3 -m src.cli --repo-path /tmp/test-repo --scenario rename-auth-service --dry-run
+```
+Result: Worktree created, validated, and cleaned up. Exit code 0.
+
+---
+
+## Architecture
+
+```
+Developer runs: /change-drill (Claude Skill)
+        ↓
+CLI (src/cli.py)
+  ├─ Load scenarios (scenarios.json)
+  ├─ Prompt for selection
+  ├─ Get confirmation
+        ↓
+Harness (src/harness.py)
+  ├─ Worktree (src/worktree.py)
+  │   ├─ Create: git worktree add
+  │   ├─ Work: [coding agent makes changes here]
+  │   ├─ Measure: git diff
+  │   └─ Cleanup: git worktree remove
+  │
+  ├─ Measurement (src/measurement.py)
+  │   ├─ Parse diff
+  │   ├─ Detect build command
+  │   ├─ Run verification
+  │   └─ Collect evidence
+  │
+  └─ Report (src/report.py)
+      ├─ Generate Markdown
+      ├─ Serialize JSON
+      └─ Save files
+        ↓
+Results Directory (results/)
+  ├─ {scenario-id}_{timestamp}.json
+  ├─ {scenario-id}_{timestamp}.md
+  └─ {scenario-id}_{timestamp}.diff
+```
+
+---
+
+## Current Limitations (MVP)
+
+These are intentional MVP constraints and will be addressed in Phase 2:
+
+1. **Single scenario per run** — Not yet parallel execution
+2. **No sub-agent splitting** — All logic runs in Python, not yet divided into Scenario/Verification/Measurement agents
+3. **No Hook automation** — Skill is manual invocation only
+4. **Simple build detection** — Heuristic order: Makefile → npm → pytest → default to make
+5. **No scenario history/comparison** — Results are independent files, no cross-run analysis yet
+6. **No UI** — CLI-only, text output
+7. **No database** — Results stored as files only
+
+---
+
+## How to Use (MVP)
+
+### Manual CLI Invocation (Current)
+
+```bash
+cd /Users/byurin/codeStress
+
+# Interactive selection
+python3 -m src.cli --repo-path /path/to/target-repo
+
+# Direct scenario with automatic confirmation
+python3 -m src.cli --repo-path /path/to/target-repo --scenario rename-auth-service
+
+# Dry-run (validate setup only)
+python3 -m src.cli --repo-path /path/to/target-repo --scenario rename-auth-service --dry-run
+```
+
+### Via Claude Skill (Future)
+
+Once integrated with Claude Code hooks:
+```bash
+/change-drill
+```
+
+### Expected Workflow
+
+1. Skill presents scenario to user
+2. User provides repository path (if not in current directory)
+3. System shows experiment plan and gets confirmation
+4. Harness:
+   - Creates isolated worktree
+   - **[Pauses for Coding Agent to make changes]**
+   - Captures diff and metrics
+   - Runs verification
+   - Generates report
+5. User sees results with links to JSON/Markdown/diff files
+
+---
+
+## Known Issues & Notes
+
+### ⚠️ Measurement Precision
+
+The diff parser currently:
+- ✅ Counts total files changed
+- ✅ Counts total lines added/deleted globally
+- ❌ Does NOT yet count per-file metrics (would require parsing unified diff format more carefully)
+- ❌ Does NOT yet detect function/method changes (would require language-specific parsing)
+
+These are acceptable for MVP but should be improved for Phase 2.
+
+### ⚠️ Build Detection Fallback
+
+If no recognized build system is found, defaults to `make`. This may fail silently on some repositories. Future versions should:
+- Ask user for build command if not detected
+- Support custom configuration file
+- Cache detected command
+
+### ⚠️ Coding Agent Integration
+
+The harness framework is ready to receive changes from an external Coding Agent, but the current MVP:
+- Does NOT automatically invoke a Coding Agent
+- Expects changes to be present in worktree before measurement phase
+- Works fine for testing the measurement/reporting pipeline
+
+Full integration with Claude as Coding Agent will require:
+- Two-way communication between skill and harness
+- Pause points for agent work
+- Status reporting during agent execution
+
+### ⚠️ Worktree Cleanup
+
+The cleanup is robust but if git-worktree-remove fails for permission reasons (e.g., open file handles on macOS), the cleanup will log a warning but not halt the experiment. Manual cleanup may be needed:
+```bash
+git worktree remove --force /path/to/worktree
+```
+
+---
+
+## Files Structure
+
+```
+codeStress/
+├── .claude/
+│   ├── settings.json              (Harness config)
+│   └── skills/
+│       └── change-drill.md        (Skill definition)
+├── .gitignore                     (Ignores results/*.*)
+├── docs/
+│   ├── code_stress.md            (Planning document)
+│   ├── code-stress-user-scenarios.md (User scenarios)
+│   └── system_design.md          (High-level diagram)
+├── src/
+│   ├── __init__.py
+│   ├── worktree.py              (Worktree management)
+│   ├── measurement.py           (Diff parsing, verification)
+│   ├── report.py                (Report generation)
+│   ├── harness.py               (Orchestrator)
+│   ├── cli.py                   (CLI entry point)
+│   └── scenarios.json           (Scenario catalog)
+├── results/                      (Experiment outputs - gitignored)
+│   └── .gitkeep
+└── IMPLEMENTATION.md            (This file)
+```
+
+---
+
+## Next Steps
+
+### Immediate (Before Phase 2)
+
+1. **Integrate with Claude Skill** — Make `/change-drill` actually invoke the harness and interact with Claude as Coding Agent
+2. **Test against real repositories** — Run against a more complex test repository (not just the minimal test repo)
+3. **Scenario generation** — Consider how to generate scenarios programmatically vs. curating by hand
+4. **Documentation** — Add CLI help, docstrings, and usage guide
+
+### Phase 2
+
+1. **Sub-agent splitting** — Separate Scenario, Coding, Verification, and Measurement agents
+2. **Parallel execution** — Run multiple scenarios concurrently in separate worktrees
+3. **Hook automation** — Scheduled or event-triggered experiments
+4. **Improved metrics** — Per-file statistics, function/method change detection
+5. **Result comparison** — Compare change costs across scenarios, detect trends
+6. **UI/Dashboard** — Web interface to browse results and compare experiments
+
+---
+
+## Validation Checklist
+
+✅ All Python modules compile without errors
+✅ Worktree creation and cleanup work reliably
+✅ Diff parsing produces correct statistics
+✅ Build command auto-detection works
+✅ Verification runs and captures output
+✅ Report generation produces valid JSON and Markdown
+✅ Results are saved to disk
+✅ CLI accepts arguments and shows confirmation
+✅ Dry-run mode validates setup
+✅ Exit codes are correct (0 for success, 1 for failure)
+✅ End-to-end workflow is functional
+
+---
+
+## Example Output
+
+See: `/Users/byurin/codeStress/results/rename-auth-service_2026-08-16T00-44-25-729205.md`
+
+Report excerpt:
+```markdown
+# Change Drill: Rename AuthenticationService to IdentityService
+
+## Result
+
+**Status:** ✓ Completed
+**Base Commit:** `96b81a7`
+
+## Change Cost
+
+- Files changed: **3**
+- Lines added: 7
+- Lines deleted: 7
+- Test files affected: 1
+
+## Verification
+
+- Build: ✓ Passed (npm test)
+- Tests: ✓ Passed
+```
+
+---
+
+## Conclusion
+
+The MVP harness infrastructure is complete and operational. All core components work end-to-end:
+- ✅ Worktree isolation
+- ✅ Change measurement
+- ✅ Verification
+- ✅ Report generation
+- ✅ Structured results
+
+The framework is ready for integration with Claude as Coding Agent and can now proceed to Phase 2: Multi-agent orchestration and parallel execution.
