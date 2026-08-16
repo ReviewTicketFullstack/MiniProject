@@ -8,6 +8,11 @@ from typing import Dict, List, Any, Optional
 from .worktree import Worktree, WorktreeError
 from .measurement import parse_diff, run_verification, ExperimentEvidence
 from .report import save_experiment_results
+from .analysis import (
+    ExperimentAnalyzer,
+    AgentMetrics,
+    ComparisonReportGenerator,
+)
 
 
 class ParallelDrill:
@@ -194,6 +199,54 @@ class ParallelDrill:
                 print(f"  Agent {agent_id}: {json_path.parent.name}")
 
             print("")
+            print("Analyzing results across agents...")
+
+            # Create comparison analysis
+            analyzer = ExperimentAnalyzer(self.scenario_id, self.scenario_name)
+
+            for agent_id, evidence in all_evidence.items():
+                metrics = AgentMetrics(
+                    agent_id=agent_id,
+                    files_changed=evidence.change_cost.total_files_changed
+                    if evidence.change_cost
+                    else 0,
+                    lines_added=evidence.change_cost.total_lines_added
+                    if evidence.change_cost
+                    else 0,
+                    lines_deleted=evidence.change_cost.total_lines_deleted
+                    if evidence.change_cost
+                    else 0,
+                    test_files_changed=evidence.change_cost.test_files_changed
+                    if evidence.change_cost
+                    else 0,
+                    build_success=evidence.verification.build_success,
+                    test_success=evidence.verification.test_success,
+                    files_list=[f.path for f in evidence.change_cost.files_changed_list]
+                    if evidence.change_cost
+                    else [],
+                    diff=evidence.diff,
+                )
+                analyzer.add_agent_result(agent_id, metrics)
+
+            comparison = analyzer.analyze()
+
+            # Generate comparison reports
+            comparison_md = ComparisonReportGenerator.generate_markdown(comparison)
+            comparison_json = ComparisonReportGenerator.generate_json(comparison)
+
+            # Save comparison reports
+            comparison_dir = self.results_dir / "comparison"
+            comparison_dir.mkdir(parents=True, exist_ok=True)
+
+            comparison_md_path = comparison_dir / f"comparison_{timestamp.replace(':', '-').replace('.', '-')}.md"
+            comparison_json_path = comparison_dir / f"comparison_{timestamp.replace(':', '-').replace('.', '-')}.json"
+
+            comparison_md_path.write_text(comparison_md)
+            comparison_json_path.write_text(comparison_json)
+
+            print(f"  Comparison: {comparison_md_path.parent.name}/")
+
+            print("")
             print("Cleaning up worktrees...")
             for agent_id, worktree in self.worktrees.items():
                 if worktree.cleanup():
@@ -227,6 +280,8 @@ class ParallelDrill:
                 },
                 "base_commit": self.base_commit,
                 "timestamp": timestamp,
+                "comparison_markdown": str(comparison_md_path),
+                "comparison_json": str(comparison_json_path),
             }
 
         except Exception as e:
