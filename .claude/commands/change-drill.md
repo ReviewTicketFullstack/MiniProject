@@ -1,60 +1,90 @@
 ---
 name: change-drill
-description: Execute a controlled change drill experiment in an isolated Git worktree
+description: Execute a controlled change drill experiment in an isolated Git worktree with a real Claude Coding Agent
 ---
 
 # Change Drill Skill
 
-Execute a change scenario experiment to measure code modification impact.
+Execute a complete change drill: setup worktree → invoke Coding Agent → measure results.
 
-This skill orchestrates a complete change drill in three phases:
-1. **Setup** — Create isolated worktree
-2. **Code** — Launch Claude Coding Agent to implement scenario
-3. **Measure** — Run verification and generate report
+## Pre-execution
 
-## Instructions
+Get repository path and scenario from user:
 
-When invoked, follow these steps:
+1. Ask: "Which repository should we experiment on?" (default: current directory)
+2. Available scenarios:
+   - `add-cancellation-reason` — Add optional field to Order domain entity
+   - `rename-auth-service` — Refactor: rename a core service
 
-1. **Get repository path from user**
-   - Ask which repository to run the experiment against
-   - If unclear, default to current directory
-   
-2. **Load scenario**
-   - Ask user to select or specify scenario
-   - Available scenarios: `add-cancellation-reason`, `rename-auth-service`
+## Phase 1: Setup
 
-3. **Setup phase: Create isolated worktree**
-   - Run: `cd /Users/byurin/codeStress && python3 -m src.cli --repo-path <repo-path> --scenario <scenario-id> --phase setup`
-   - Watch the output and extract:
-     - `worktree_path`: Line like "Worktree ready at: /path/..."
-     - `base_commit`: Line like "Base commit: XXXXXXX"
-   - Show user that setup is complete
+Run setup phase to create isolated worktree:
 
-4. **Invoke Coding Agent to implement scenario**
-   - Use the Agent tool to spawn a new Claude coding agent
-   - Tell the agent:
-     - The target directory is the worktree (use worktree_path)
-     - The task is from the selected scenario prompt
-     - The agent should modify code files in that directory
-     - The agent should make all necessary changes to complete the scenario
-   - Wait for the agent to finish and signal completion
+```bash
+cd /Users/byurin/codeStress
+python3 -m src.cli --repo-path <repo-path> --scenario <scenario-id> --phase setup
+```
 
-5. **Measure phase: Capture results**
-   - Run: `cd /Users/byurin/codeStress && python3 -m src.cli --repo-path <repo-path> --scenario <scenario-id> --phase measure --worktree-path <worktree-path> --base-commit <base-commit>`
-   - Monitor the output for measurements and report
+Extract from output:
+- **worktree_path** — Line "Worktree ready at: /path/..."
+- **base_commit** — First 7 chars from "Base commit: XXXXXXX"
+- **scenario_prompt** — The scenario prompt from scenarios.json
 
-6. **Display results to user**
-   - Extract and show:
-     - Completion status (✓ or ✗)
-     - Files changed, lines added/deleted
-     - Build and test status
-     - Paths to result files
-   - Offer to show the generated report details
+Confirm with user: "Setup complete. Worktree ready. Invoking Coding Agent now..."
 
-## Key Design Points
+## Phase 2: Coding Agent (REAL CLAUDE AGENT)
 
-- **Isolation**: Worktree is separate from original repository
-- **Simplicity**: One coding agent, sequential execution
-- **Observability**: All output is captured and shown to user
-- **Reusability**: Each phase can run independently
+Spawn a real Claude Coding Agent to implement the scenario:
+
+**Agent Instructions:**
+
+```
+You are a Coding Agent for the codeStress change drill experiment.
+
+Task: {{ scenario_prompt }}
+
+Critical constraints:
+1. Work ONLY in this directory: {{ worktree_path }}
+2. Make ONLY the minimum necessary changes to complete the task
+3. Do NOT modify files unrelated to the scenario
+4. Run tests if present: npm test, python -m pytest, make test, etc.
+5. Report completion when done, with a summary of changes made
+
+Success means:
+- Tests pass (if applicable)
+- Build succeeds (if applicable)
+- The requested change is complete and functional
+```
+
+Wait for the Agent to report completion.
+
+## Phase 3: Measure & Report
+
+Run measure phase to capture results:
+
+```bash
+cd /Users/byurin/codeStress
+python3 -m src.cli --repo-path <repo-path> --scenario <scenario-id> \
+  --phase measure \
+  --worktree-path <worktree-path> \
+  --base-commit <base-commit>
+```
+
+Show user:
+- Completion status (✓ Completed or ✗ Incomplete)
+- Files changed, lines added/deleted
+- Verification status (Build: ✓/✗, Tests: ✓/✗)
+- Links to result files
+
+## Post-execution Safety Check
+
+Verify original repository was not modified:
+
+```bash
+cd <repo-path>
+git status
+```
+
+Should show: "nothing to commit, working tree clean"
+
+If clean, report: "✓ Original repository remains unmodified"

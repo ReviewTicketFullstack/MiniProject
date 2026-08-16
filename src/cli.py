@@ -111,6 +111,12 @@ def main():
         help="Validate setup without executing experiment",
     )
     parser.add_argument(
+        "--parallel",
+        type=int,
+        default=1,
+        help="Number of parallel agents (1 = single agent, 2+ = parallel mode)",
+    )
+    parser.add_argument(
         "--scenarios-file",
         type=Path,
         default=None,
@@ -140,50 +146,108 @@ def main():
 
         scenario = get_scenario_by_id(scenarios, scenario_id)
 
-        if args.phase in ("setup", "full"):
-            # Skip confirmation if running in phase mode (orchestrated by skill)
-            # or in dry-run mode
-            if args.phase == "full" and not args.dry_run:
-                if not confirm_experiment(args.repo_path, scenario):
-                    print("Experiment cancelled.")
-                    return 0
-            elif args.dry_run:
-                print("DRY RUN MODE - Skipping confirmation")
-                print()
+        # Check if parallel mode
+        if args.parallel > 1:
+            # Parallel mode
+            from .parallel import ParallelDrill
 
-            print("")
-            print("Starting experiment...")
-            print("")
+            if args.phase in ("setup", "full"):
+                if args.phase == "full" and not args.dry_run:
+                    if not confirm_experiment(args.repo_path, scenario):
+                        print("Experiment cancelled.")
+                        return 0
+                elif args.dry_run:
+                    print("DRY RUN MODE - Skipping confirmation")
+                    print()
 
-            harness = Harness(
-                repo_path=str(args.repo_path),
-                scenario_id=scenario["id"],
-                scenario_name=scenario["name"],
-                results_dir=str(results_dir),
-            )
+                print("")
+                print(f"Starting parallel experiment with {args.parallel} agents...")
+                print("")
 
-            if args.phase == "setup":
-                result = harness.setup()
-            else:  # full
-                result = harness.run(dry_run=args.dry_run)
-        else:  # measure
-            if not args.worktree_path or not args.base_commit:
-                print("Error: --measure phase requires --worktree-path and --base-commit")
-                return 1
+                parallel_drill = ParallelDrill(
+                    repo_path=str(args.repo_path),
+                    scenario_id=scenario["id"],
+                    scenario_name=scenario["name"],
+                    scenario_prompt=scenario.get("prompt", ""),
+                    num_agents=args.parallel,
+                    results_dir=str(results_dir),
+                )
 
-            harness = Harness(
-                repo_path=str(args.repo_path),
-                scenario_id=scenario["id"] if scenario else "unknown",
-                scenario_name=scenario["name"] if scenario else "Unknown",
-                results_dir=str(results_dir),
-            )
-            harness.worktree = __import__("src.worktree", fromlist=["Worktree"]).Worktree(
-                str(args.repo_path), scenario["id"] if scenario else "unknown"
-            )
-            harness.worktree.worktree_path = args.worktree_path
-            harness.base_commit = args.base_commit
+                if args.phase == "setup":
+                    result = parallel_drill.setup_worktrees()
+                else:  # full
+                    result = parallel_drill.setup_worktrees()
+                    if result["status"] == "setup_complete":
+                        print(
+                            "NOTE: Parallel mode setup complete. Agents must be invoked separately."
+                        )
+                        print(
+                            "Use the skill to invoke agents, then run measure phase."
+                        )
+                        return 0
 
-            result = harness.measure_and_report()
+            else:  # measure phase
+                if not args.worktree_path or not args.base_commit:
+                    print("Error: --measure phase requires --worktree-path and --base-commit")
+                    return 1
+
+                parallel_drill = ParallelDrill(
+                    repo_path=str(args.repo_path),
+                    scenario_id=scenario["id"] if scenario else "unknown",
+                    scenario_name=scenario["name"] if scenario else "Unknown",
+                    scenario_prompt="",
+                    num_agents=args.parallel,
+                    results_dir=str(results_dir),
+                )
+
+                result = parallel_drill.measure_all()
+
+        else:
+            # Single-agent mode
+            if args.phase in ("setup", "full"):
+                # Skip confirmation if running in phase mode (orchestrated by skill)
+                # or in dry-run mode
+                if args.phase == "full" and not args.dry_run:
+                    if not confirm_experiment(args.repo_path, scenario):
+                        print("Experiment cancelled.")
+                        return 0
+                elif args.dry_run:
+                    print("DRY RUN MODE - Skipping confirmation")
+                    print()
+
+                print("")
+                print("Starting experiment...")
+                print("")
+
+                harness = Harness(
+                    repo_path=str(args.repo_path),
+                    scenario_id=scenario["id"],
+                    scenario_name=scenario["name"],
+                    results_dir=str(results_dir),
+                )
+
+                if args.phase == "setup":
+                    result = harness.setup()
+                else:  # full
+                    result = harness.run(dry_run=args.dry_run)
+            else:  # measure phase (single-agent)
+                if not args.worktree_path or not args.base_commit:
+                    print("Error: --measure phase requires --worktree-path and --base-commit")
+                    return 1
+
+                harness = Harness(
+                    repo_path=str(args.repo_path),
+                    scenario_id=scenario["id"] if scenario else "unknown",
+                    scenario_name=scenario["name"] if scenario else "Unknown",
+                    results_dir=str(results_dir),
+                )
+                harness.worktree = __import__("src.worktree", fromlist=["Worktree"]).Worktree(
+                    str(args.repo_path), scenario["id"] if scenario else "unknown"
+                )
+                harness.worktree.worktree_path = args.worktree_path
+                harness.base_commit = args.base_commit
+
+                result = harness.measure_and_report()
 
         print("")
         print("=" * 60)
@@ -203,9 +267,20 @@ def main():
                 print(f"Results Markdown: {result['results_markdown']}")
                 print(f"Results Diff:     {result['results_diff']}")
             elif result["status"] == "setup_complete":
-                print(f"Status:           Setup complete")
-                print(f"Worktree:         {result['worktree_path']}")
-                print(f"Base commit:      {result['base_commit']}")
+                if "num_agents" in result:
+                    # Parallel mode
+                    print(f"Status:           Setup complete (parallel mode)")
+                    print(f"Agents:           {result['num_agents']}")
+                    print(f"Base commit:      {result['base_commit']}")
+                    print("")
+                    for agent_id, info in result.get("agents", {}).items():
+                        print(f"Agent {agent_id}:")
+                        print(f"  Worktree: {info['worktree_path']}")
+                else:
+                    # Single-agent mode
+                    print(f"Status:           Setup complete")
+                    print(f"Worktree:         {result['worktree_path']}")
+                    print(f"Base commit:      {result['base_commit']}")
             else:
                 print(f"Status:           Dry run successful (setup validated)")
             return 0
