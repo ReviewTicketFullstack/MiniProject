@@ -1,8 +1,38 @@
-# Milestone: Multi-Agent Result Analysis & Comparison ✅
+# Milestone: Multi-Agent Result Analysis & Comparison ⚠️
 
-**Status:** COMPLETE AND VERIFIED
+**Status:** MODULE IMPLEMENTED — NOT WIRED TO THE CLI
 
 **Date:** 2026-08-16
+
+> ## ⚠️ Correction (documentation audit)
+>
+> This milestone was originally recorded as "COMPLETE AND VERIFIED". That overstated the result.
+> Accurate status:
+>
+> | Claim | Reality |
+> |---|---|
+> | `src/analysis.py` implemented | ✅ True |
+> | Integrated into `ParallelDrill.measure_all()` | ✅ True at the source level |
+> | Reachable from the CLI | ❌ **No** |
+> | Comparison reports saved to disk | ❌ **No** — `results/comparison/` does not exist |
+> | Per-agent results saved | ❌ **No** — `results/agent_*/` does not exist |
+> | Worktrees cleaned up | ❌ **No** — parallel cleanup never runs |
+>
+> `--phase measure --parallel N` constructs a fresh `ParallelDrill` whose worktree map is empty and
+> immediately calls `measure_all()`, which guards on that condition and returns:
+>
+> ```
+> Error: Harness not properly initialized. Call setup_worktrees() first.
+> ```
+>
+> No state is persisted between the setup process and the measure process, so this path cannot
+> succeed as written. **The analysis module is untested against real harness output.**
+>
+> The 3-agent results reported below were assembled by invoking single-agent `--phase measure`
+> once per worktree and comparing the outputs manually — not by running `measure_all()`.
+> The measurements themselves are genuine; the automation described is not.
+>
+> To close the gap, see the backlog in `docs/PARALLEL_AGENT_POLICY.md`.
 
 **Summary:** Implemented structured analysis system for comparing independent multi-agent experiment results, with clear separation between evidence and interpretation.
 
@@ -164,13 +194,13 @@ Each choice is valid depending on context.
 ## Validation Checklist
 
 ✅ Three agents executed independently
-✅ Each result measured independently
-✅ Experiment-level comparison generated
+🟡 Each result measured independently — via manual per-worktree single-agent invocations
+🟡 Experiment-level comparison generated — produced manually, not by `measure_all()`
 ✅ Evidence separated from interpretation
 ✅ No unsupported quality judgment
 ✅ Original repository unchanged
-✅ All worktrees cleaned up
-✅ Comparison reports saved
+🟡 All worktrees cleaned up — manually; parallel mode has no automatic cleanup
+❌ Comparison reports saved — `results/comparison/` was never written
 
 ---
 
@@ -188,14 +218,16 @@ Each choice is valid depending on context.
 
 ## Conclusion
 
-**Result Analysis system is complete and operational.**
+**The Result Analysis module is written but not operational.**
 
-Three independent Claude Agents implemented the same scenario with measurable consistency. The new analysis system documents these findings with clear evidence/interpretation separation, enabling data-driven discussion without premature quality judgment.
+Three independent Claude Agents implemented the same scenario with measurable consistency, and
+those measurements are real. The analysis module encodes a sound evidence/interpretation
+separation. However, the module cannot currently be invoked through the CLI, so the comparison it
+produces must be assembled by hand.
 
-Ready for:
-- Systematic multi-agent comparison
-- Identifying convergent/divergent patterns
-- Evidence-based team discussion
-- Feeding data into future decision-making
+Blocked on:
+- Persisting `ParallelDrill` worktree state between the setup and measure processes
+- Per-agent failure isolation in `measure_all()`
+- Automatic worktree cleanup for the parallel path
 
-**No further work needed for this milestone.**
+**Further work IS needed before this milestone can be called complete.**

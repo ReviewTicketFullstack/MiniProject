@@ -1,8 +1,37 @@
 # Parallel Agent Execution Policy
 
 **Last Updated:** 2026-08-16
-**Version:** 1.0
-**Status:** Active
+**Version:** 1.1
+**Status:** Active (policy) / Partially implemented (enforcement)
+
+---
+
+## ⚠️ Implementation Status
+
+This document states **policy**. Much of it is not yet enforced or reachable in code. Read this
+table before relying on any guarantee below.
+
+| Policy item | Implemented? |
+|---|---|
+| Create 1–3 isolated worktrees | ✅ Yes |
+| CLI default agent count | ⚠️ Defaults to **1**, not 3 |
+| Hard limit of 3 agents | ❌ **Not enforced** — no range validation on `--parallel` |
+| Concurrent agent execution | ⚠️ Performed by the assistant, not the harness |
+| Per-agent measurement | ❌ Unreachable from the CLI |
+| Comparison report generation | ❌ Unreachable from the CLI |
+| Automatic worktree cleanup (parallel) | ❌ Does not occur |
+| Pre-execution checks | ❌ None implemented |
+| Per-agent failure isolation | ❌ Not implemented |
+
+**Root cause for the unreachable items:** `--phase measure --parallel N` constructs a fresh
+`ParallelDrill` whose worktree map is empty, then calls `measure_all()`, which guards on exactly
+that condition. It always exits with:
+
+```
+Error: Harness not properly initialized. Call setup_worktrees() first.
+```
+
+No state is persisted between the setup process and the measure process.
 
 ---
 
@@ -14,12 +43,13 @@ codeStress supports **parallel execution of up to 3 independent Claude Coding Ag
 
 ### Limits
 
-| Parameter | Value |
-|-----------|-------|
-| Minimum Agents | 1 (single-agent mode) |
-| Default Agents | 3 (parallel mode) |
-| Maximum Agents | 3 (hard limit) |
-| Agents Beyond 3 | Not supported |
+| Parameter | Value | Enforced in code? |
+|-----------|-------|---|
+| Minimum Agents | 1 (single-agent mode) | — |
+| CLI Default | 1 | ✅ `--parallel` defaults to `1` |
+| Recommended for parallel mode | 3 | ❌ Convention only |
+| Maximum Agents | 3 (policy limit) | ❌ **Not enforced** |
+| Agents Beyond 3 | Not supported | ❌ Accepted by the CLI anyway |
 
 ### Core Principle
 
@@ -54,19 +84,28 @@ codeStress supports **parallel execution of up to 3 independent Claude Coding Ag
 ### User Configuration
 
 ```bash
-# Single-agent (default for MVP)
+# Single-agent (CLI default — --parallel may be omitted)
 python3 -m src.cli --repo-path <repo> --scenario <id> --parallel 1
 
 # Dual-agent
 python3 -m src.cli --repo-path <repo> --scenario <id> --parallel 2
 
-# Tri-agent (maximum, default for parallel mode)
+# Tri-agent (policy maximum)
 python3 -m src.cli --repo-path <repo> --scenario <id> --parallel 3
 
-# Error: Not allowed
+# Violates policy, but IS NOT REJECTED by the CLI today.
+# No range validation exists; this creates 4 worktrees.
 python3 -m src.cli --repo-path <repo> --scenario <id> --parallel 4
-# → Error: --parallel must be 1-3
 ```
+
+To make the limit real, the CLI would need a guard such as:
+
+```python
+if not 1 <= args.parallel <= 3:
+    raise ValueError("--parallel must be 1-3")
+```
+
+This guard is **not present** in `src/cli.py`.
 
 ### Worktree Allocation
 
@@ -81,7 +120,11 @@ Each worktree:
 - Isolated Git repository state
 - Independent filesystem
 - No cross-access between agents
-- Cleaned up after measurement phase
+- ❌ **Not** cleaned up in parallel mode — the measurement phase that performs cleanup is
+  unreachable, so worktrees persist under `<repo>/.git/worktrees/` and must be removed manually:
+  ```bash
+  git worktree remove --force <path>
+  ```
 
 ### Concurrent Execution
 
@@ -98,30 +141,40 @@ T+~62s: Agent C completes (notification)
 
 All agents start at nearly identical times; no artificial sequencing.
 
+**Important:** this launch sequence is executed by the **Claude assistant** following the
+`/change-drill` prompt, not by the harness. The harness creates worktrees and returns; it has no
+knowledge of, control over, or record of any agent. Concurrency is therefore an orchestration
+property of the prompt, not a guarantee the harness can enforce.
+
 ---
 
 ## Architectural Guarantees
 
 ### Isolation
 
-- ✅ **No Interference:** Agents cannot access other agents' worktrees
+- ✅ **No Interference:** Each agent gets a separate worktree directory
 - ✅ **Independent State:** Each agent's code changes isolated in its worktree
-- ✅ **Clean Original:** Original repository never modified by any agent
-- ✅ **Verified Cleanup:** All worktrees cleaned after completion
+- ✅ **Clean Original:** Original repository never modified (detached checkouts)
+- ❌ **Verified Cleanup:** Not performed in parallel mode — see Worktree Allocation above
+
+Note: scoping an agent to its worktree relies on the agent honoring the path constraint given in
+its prompt. There is no filesystem-level sandbox preventing an agent from writing elsewhere.
 
 ### Concurrency
 
-- ✅ **True Parallelism:** Agents run concurrently, not sequentially
-- ✅ **Independent Measurement:** Each agent's results measured independently
+- ⚠️ **True Parallelism:** Depends on the assistant backgrounding each agent; not harness-enforced
+- ❌ **Independent Measurement:** Parallel measurement is unreachable from the CLI
 - ✅ **No Blocking:** No agent waits for another
-- ✅ **Notification-Based:** System notifies when each agent completes
+- ⚠️ **Notification-Based:** Completion notification is a property of the assistant's task runner
 
 ### Evidence Collection
 
-- ✅ **Per-Agent Tracking:** Separate JSON/Markdown/diff for each agent
-- ✅ **Independent Verification:** Each agent's tests run independently
-- ✅ **Combined Reporting:** Results merged for comparative analysis
-- ✅ **Full Preservation:** No evidence lost during concurrent execution
+- ❌ **Per-Agent Tracking:** `results/agent_<ID>/` is never written — the code path is unreachable
+- ❌ **Independent Verification:** Not reached in parallel mode. Even in single-agent mode, tests
+  are not verified independently of the build (`test_success` mirrors `build_success`)
+- ❌ **Combined Reporting:** `results/comparison/` is never written
+- ⚠️ **Full Preservation:** Evidence must currently be collected by invoking single-agent
+  `--phase measure` manually, once per worktree
 
 ---
 
@@ -129,11 +182,16 @@ All agents start at nearly identical times; no artificial sequencing.
 
 ### Pre-Execution Checks
 
+> **Status: none of these are implemented.** The only validation performed is that the target path
+> exists and contains a `.git` entry (`Worktree.validate_repo()`). The checks below are the
+> intended policy and must currently be performed by the operator.
+
 Before launching N agents:
-1. Validate target repository is clean
-2. Verify N ≤ 3
-3. Ensure sufficient disk space (N worktrees + results)
-4. Confirm scenario is well-defined
+1. Validate target repository is clean — ❌ not checked; a dirty working tree makes the base
+   commit ambiguous but does not stop execution
+2. Verify N ≤ 3 — ❌ not checked
+3. Ensure sufficient disk space (N worktrees + results) — ❌ not checked
+4. Confirm scenario is well-defined — ❌ not checked
 
 ### During Execution
 
@@ -144,14 +202,21 @@ Before launching N agents:
 
 ### Post-Execution
 
-1. All worktrees cleaned up automatically
-2. Evidence preserved for each agent
-3. Comparison report generated
-4. Original repository verified unchanged
+> **Status: items 1–3 do not occur in parallel mode.**
+
+1. All worktrees cleaned up automatically — ❌ manual cleanup required
+2. Evidence preserved for each agent — ⚠️ requires manual per-worktree measure invocations
+3. Comparison report generated — ❌ code path unreachable
+4. Original repository verified unchanged — ✅ verifiable via `git status` in the target repo
 
 ---
 
 ## Failure Handling
+
+> **Status: not implemented.** The section below describes intended behavior.
+> Today, `measure_all()` wraps all agents in a single `try` block and returns one error for the
+> whole run if any agent's measurement raises. There is no per-agent failure isolation and no
+> partial comparison report.
 
 ### Single Agent Failure
 
@@ -247,15 +312,28 @@ Single-agent mode (1 agent) still supported because:
 
 ## Summary
 
-| Aspect | Specification |
-|--------|---|
-| Minimum agents | 1 |
-| Default agents | 3 |
-| Maximum agents | 3 |
-| Execution | Concurrent (not sequential) |
-| Isolation | Per-worktree (complete) |
-| Original repo protection | Guaranteed |
-| Failure handling | Explicit, non-hiding |
-| Policy enforcement | Hard limit in CLI |
+| Aspect | Specification | Implemented |
+|--------|---|---|
+| Minimum agents | 1 | ✅ |
+| CLI default agents | 1 | ✅ |
+| Recommended parallel count | 3 | ❌ convention only |
+| Maximum agents | 3 | ❌ not enforced |
+| Execution | Concurrent (not sequential) | ⚠️ assistant-driven |
+| Isolation | Per-worktree | ✅ |
+| Original repo protection | Guaranteed | ✅ |
+| Failure handling | Explicit, non-hiding | ❌ |
+| Policy enforcement | Hard limit in CLI | ❌ **no validation exists** |
 
-**This policy is effective immediately and applies to all parallel execution modes in codeStress.**
+**This policy states intent. Where the "Implemented" column shows ❌, the policy is currently
+maintained by operator discipline rather than by code.**
+
+## Gap Closure Backlog
+
+To bring the implementation in line with this policy:
+
+1. Add `1 <= --parallel <= 3` validation to `src/cli.py`
+2. Persist `ParallelDrill` state (worktree paths + base commit) between the setup and measure
+   processes so `measure_all()` becomes reachable
+3. Wrap per-agent measurement in individual `try` blocks for failure isolation
+4. Add a clean-working-tree precondition check
+5. Ensure worktree cleanup runs even when measurement is never invoked

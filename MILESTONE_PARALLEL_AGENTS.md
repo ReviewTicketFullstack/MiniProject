@@ -1,6 +1,12 @@
 # Milestone: Parallel Claude Coding Agents ✅
 
-**Status:** COMPLETE AND VERIFIED
+**Status:** SETUP PHASE COMPLETE — MEASUREMENT PHASE NOT WIRED TO CLI
+
+> **Correction (documentation audit):** originally recorded as "COMPLETE AND VERIFIED". Worktree
+> creation for N agents works and agent isolation was verified. However
+> `--phase measure --parallel N` always fails with "Harness not properly initialized", so parallel
+> measurement, comparison reporting, and worktree cleanup do not occur. See
+> `docs/PARALLEL_AGENT_POLICY.md`.
 
 **Date:** 2026-08-16
 
@@ -442,11 +448,16 @@ All failure cases preserved in evidence for investigation.
 
 The current parallel architecture supports:
 - **Minimum:** 1 agent (single-agent mode)
-- **Default:** 3 agents concurrently
-- **Maximum:** 3 agents concurrently
-- **Beyond 3:** Not supported (would require architectural redesign)
+- **CLI default:** 1 agent (`--parallel` defaults to `1`)
+- **Recommended for parallel mode:** 3 agents concurrently
+- **Maximum:** 3 agents concurrently — **policy only, not enforced in code**
+- **Beyond 3:** Not supported (would require architectural redesign), but not rejected by the CLI
 - **Current Test:** 2 agents concurrently (within limits)
 - **Isolation:** Proven reliable with 2; design capacity extends to 3
+
+> **Scope limit:** "supports" here means worktree creation. The parallel measurement and comparison
+> phases are not reachable from the CLI, and parallel worktrees are not cleaned up automatically.
+> See `docs/PARALLEL_AGENT_POLICY.md` for the implementation status table.
 
 ---
 

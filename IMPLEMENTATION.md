@@ -26,20 +26,29 @@ The minimal harness infrastructure for codeStress is now complete and has been v
 
 **Key Features:**
 - Worktree creation and cleanup with error handling
-- Automatic build/test command detection (Makefile, npm, pytest)
-- Diff parsing to extract: files changed, lines added/deleted, test file detection
+- Automatic verification command detection (Makefile, npm, pytest) — **one command, serving as
+  both build and test; there is no separate test detection**
+- Diff parsing to extract: files changed, lines added/deleted, test file count
 - Structured JSON evidence output
 - Human-readable Markdown reports
-- Context manager pattern for reliable worktree cleanup
+- Context manager pattern available on `Worktree` (currently unused by the harness)
 
-### 2. Claude Skill (`/.claude/skills/change-drill.md`)
+### 2. Claude Command (`.claude/commands/change-drill.md`)
 
-Thin entry point that orchestrates:
+A prompt file (not executable code) that directs the assistant through the drill. Note there is no
+`.claude/skills/` directory; the file lives under `.claude/commands/`.
+
+What the prompt file owns:
+1. Coding Agent invocation — **the harness never does this**
+2. Phase sequencing (setup → agent → measure)
+3. Carrying `worktree_path` and `base_commit` between the two harness processes
+4. Result presentation
+
+What the Python CLI owns:
 1. Scenario loading and selection
-2. Repository validation
-3. Experiment confirmation
-4. Harness invocation
-5. Result display
+2. Repository validation (existence + `.git` presence only)
+3. Experiment confirmation — **only under `--phase full`**, which the prompt does not use
+4. Measurement, verification, reporting, cleanup
 
 ### 3. Configuration (`.claude/settings.json`)
 
@@ -158,13 +167,22 @@ Results Directory (results/)
 
 These are intentional MVP constraints and will be addressed in Phase 2:
 
-1. **Single scenario per run** — Not yet parallel execution
-2. **No sub-agent splitting** — All logic runs in Python, not yet divided into Scenario/Verification/Measurement agents
-3. **No Hook automation** — Skill is manual invocation only
+1. **Single scenario per run** — `--parallel N` runs N agents on the *same* scenario; running
+   different scenarios concurrently is not supported
+2. **No sub-agent splitting** — All logic runs in Python, not yet divided into Scenario/Verification/Measurement agents. Only the Coding Agent exists, and it is spawned by the assistant, not the harness
+3. **No Hook automation** — Manual invocation only; no hooks are defined in `.claude/settings.json`
 4. **Simple build detection** — Heuristic order: Makefile → npm → pytest → default to make
 5. **No scenario history/comparison** — Results are independent files, no cross-run analysis yet
-6. **No UI** — CLI-only, text output
+6. **No UI** — CLI-only, text output. No data-flow visualization of any kind is produced at runtime
 7. **No database** — Results stored as files only
+8. **Parallel measurement unreachable** — `--phase measure --parallel N` always fails with
+   "Harness not properly initialized", because a fresh `ParallelDrill` has no worktree state and
+   nothing is persisted between the setup and measure processes. `src/analysis.py` is therefore
+   dead code from the CLI's perspective, and parallel worktrees are never cleaned up
+9. **No agent-count validation** — `--parallel` accepts any integer despite the documented
+   3-agent policy limit
+10. **No precondition checks** — A dirty working tree, a missing build command, or insufficient
+    disk space will not stop or warn an experiment
 
 ---
 
@@ -185,25 +203,32 @@ python3 -m src.cli --repo-path /path/to/target-repo --scenario rename-auth-servi
 python3 -m src.cli --repo-path /path/to/target-repo --scenario rename-auth-service --dry-run
 ```
 
-### Via Claude Skill (Future)
+### Via Claude Command (Current)
 
-Once integrated with Claude Code hooks:
 ```bash
 /change-drill
 ```
 
-### Expected Workflow
+This is available now and is the intended way to run a drill. It is manual invocation — no hook
+integration exists.
 
-1. Skill presents scenario to user
-2. User provides repository path (if not in current directory)
-3. System shows experiment plan and gets confirmation
-4. Harness:
-   - Creates isolated worktree
-   - **[Pauses for Coding Agent to make changes]**
-   - Captures diff and metrics
-   - Runs verification
-   - Generates report
+### Actual Workflow
+
+The harness does **not** pause for the agent. Instead the assistant invokes it twice:
+
+1. Assistant presents scenarios to user, gets repository path
+2. Assistant runs `--phase setup`
+   - Harness creates the isolated worktree and prints `worktree_path` + truncated base commit
+   - **No confirmation prompt and no clean-tree check occur on this path**
+   - Harness process exits; no state is persisted
+3. Assistant spawns a Coding Agent scoped to `worktree_path` and waits for it to report completion
+4. Assistant runs `--phase measure --worktree-path <path> --base-commit <full-sha>`
+   - Harness captures the diff, runs the single verification command, generates reports, and
+     removes the worktree
 5. User sees results with links to JSON/Markdown/diff files
+
+`--phase full` runs steps 2 and 4 back to back with no pause, so it always measures an empty diff.
+It is not usable for real drills.
 
 ---
 
@@ -214,10 +239,41 @@ Once integrated with Claude Code hooks:
 The diff parser currently:
 - ✅ Counts total files changed
 - ✅ Counts total lines added/deleted globally
-- ❌ Does NOT yet count per-file metrics (would require parsing unified diff format more carefully)
+- ✅ Counts test files via a path heuristic (`test`/`spec` in path)
+- ❌ Does NOT yet count per-file metrics — `FileDiff.lines_added` / `lines_deleted` are always `0`
 - ❌ Does NOT yet detect function/method changes (would require language-specific parsing)
+- ❌ Does NOT distinguish add/delete/rename — `FileDiff.status` is always `"M"`
+- ❌ Does NOT populate `FileDiff.is_test_file`, so the `(test)` marker in Markdown reports never
+  renders (the aggregate `test_files_changed` count is computed correctly and separately)
+- ❌ Does NOT compute `unrelated_files_modified` — hardcoded to `0`
+
+### ⚠️ Untracked Files Are Invisible
+
+Measurement runs `git diff <base_commit>`, which **excludes untracked files**. Any file the Coding
+Agent newly creates is not counted unless it was staged. For scenarios where the expected solution
+adds files, measurement will under-report unless the agent is instructed to `git add` its work.
 
 These are acceptable for MVP but should be improved for Phase 2.
+
+### ⚠️ Tests Are Not Independently Verified
+
+`run_verification()` detects and runs **one** command, then derives the test result from it:
+
+```python
+build_success = result.returncode == 0
+if build_success:
+    test_success = True     # mirrored, not measured
+```
+
+`test_command` is always `""`. Consequences:
+
+- `Tests: ✓` in any report carries no information beyond `Build: ✓`
+- `completed = build_success and test_success` reduces to `completed = build_success`
+- A drill where the agent changed nothing, but the verification command passes, is recorded as
+  "Completed"
+
+Detection also inspects the **original repository**, not the worktree, so a scenario that changes
+the build system would still be verified with the original command.
 
 ### ⚠️ Build Detection Fallback
 
@@ -228,14 +284,18 @@ If no recognized build system is found, defaults to `make`. This may fail silent
 
 ### ⚠️ Coding Agent Integration
 
-The harness framework is ready to receive changes from an external Coding Agent, but the current MVP:
-- Does NOT automatically invoke a Coding Agent
-- Expects changes to be present in worktree before measurement phase
-- Works fine for testing the measurement/reporting pipeline
+The harness framework receives changes from an external Coding Agent. It:
+- Does NOT invoke a Coding Agent — no `Task`, subprocess, or API call to any agent exists in `src/`
+- Expects changes to be present in the worktree before the measurement phase
+- Has no knowledge of, control over, or record of the agent that made them
 
-Full integration with Claude as Coding Agent will require:
-- Two-way communication between skill and harness
-- Pause points for agent work
+Agent invocation works today only because `.claude/commands/change-drill.md` instructs the
+assistant to spawn one between the two harness phases. This is a real integration in practice, but
+it lives in the prompt layer, not the harness.
+
+Moving orchestration into the harness would require:
+- Two-way communication between the command and the harness
+- Pause points for agent work (or state persistence between phases)
 - Status reporting during agent execution
 
 ### ⚠️ Worktree Cleanup

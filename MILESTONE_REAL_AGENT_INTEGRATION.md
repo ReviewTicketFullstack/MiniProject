@@ -113,9 +113,11 @@ python3 -m src.cli --repo-path /tmp/test-repo-order \
 3. `tests/test.js` — Test coverage expanded
 
 ### Verification ✅
-- **Build Status:** ✓ Passed (npm test)
-- **Test Status:** ✓ Passed (9/9 tests)
-- **Build Command:** `npm test`
+- **Verification Command:** `npm test` (exit 0)
+- **Build Status:** ✓ Passed
+- **Test Status:** ✓ — **not independently verified.** The harness runs one command and copies its
+  outcome into both fields (`test_success = build_success`). The "9/9 tests" figure came from
+  reading the command's stdout by hand, not from a separate harness-run test step.
 
 ### Generated Artifacts ✅
 All stored in `/Users/byurin/codeStress/results/add-cancellation-reason_2026-08-16T13-54-14-827854.{json,md,diff}`

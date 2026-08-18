@@ -1,9 +1,27 @@
 # Documentation Update Log: Parallel Agent Policy
 
 **Date:** 2026-08-16
-**Policy:** Maximum 3 parallel agents (1-3 agents configurable, 3 default)
+**Policy:** Maximum 3 parallel agents (1-3 agents configurable, 3 recommended for parallel mode)
 **Scope:** All documentation consistency update
-**Status:** Complete
+**Status:** Superseded — see the flow-vs-documentation audit entry below
+
+> ## ⚠️ Superseded by implementation audit (2026-08-16)
+>
+> This log recorded documentation as internally consistent. It was — but it was consistent with a
+> *policy*, not with the *implementation*. A subsequent audit that reconstructed the flow from code
+> found the following, and all documents have since been updated to state implementation status
+> explicitly:
+>
+> - **CLI default is 1 agent, not 3.** Several documents claimed 3.
+> - **The 3-agent limit is not enforced.** No range validation exists on `--parallel`; the
+>   "Error: --parallel must be 1-3" output shown in the policy document was never real.
+> - **Parallel measurement is unreachable from the CLI**, so comparison reports, per-agent
+>   evidence directories, and parallel worktree cleanup do not happen.
+> - **The harness never invokes a Coding Agent**; that lives in the `/change-drill` prompt.
+> - **Tests are not verified independently of the build** (`test_success = build_success`).
+>
+> The consistency table at the bottom of this log describes agreement between documents only. It
+> should not be read as agreement with the codebase.
 
 ---
 
@@ -184,7 +202,10 @@ Updated all project documentation to establish and clarify the parallel agent ex
 | PARALLEL_AGENT_POLICY.md | 1 | 3 | 3 |
 | IMPLEMENTATION.md | (implicit 1-3) | - | 3 |
 
-✅ **All documents consistent**
+✅ **All documents consistent with each other (as of this log)**
+❌ **Not consistent with the code:** the actual CLI default is **1**, and the maximum of 3 is
+unenforced. Documents have since been corrected to state `--parallel` defaults to 1 and that the
+limit is convention rather than validation.
 
 ---
 
