@@ -1,162 +1,183 @@
 ---
 name: change-drill
-description: Execute a controlled parallel change drill experiment with natural-language input
+description: Predict implementation approach and cost for a proposed change (read-only analysis)
 ---
 
-# Change Drill Skill
+# Change Drill: Prediction Mode
 
-Execute a complete change drill with natural-language input: natural language → temporary scenario → 2-agent parallel experiment → measurement → analysis → report.
+Predict how a proposed change would be implemented without actually implementing it.
 
-**This skill now uses 2-agent parallel execution.** Natural language input is interpreted and structured into a temporary Scenario, then passed to the existing parallel infrastructure.
+**Workflow:** Natural language → Read-only analysis → 2-agent predictions → Terminal UI report
 
-## Pre-execution
+## Pre-execution: Collect User Input
 
-Get repository path and change description from user:
+Do NOT show a numbered menu. Do NOT assume any scenario.
 
-1. Ask: "Which repository should we experiment on?" (default: current directory)
-2. Ask: "What change would you like to test? (Describe in natural language)"
+1. Ask: "Which repository should we predict for?" (default: current directory)
+   - Accept any git repository path
 
-Example user response:
-```
-"Add order cancellation to the order history. Only paid orders should be cancellable. 
-Add a cancel button to each order, validate payment status, and update the order state."
-```
+2. Ask: "What change would you like to predict? (Describe in natural language)"
+   - Wait for the user's natural-language request
+   - Accept any description of a feature, refactoring, or fix
+   - Do NOT suggest predefined scenarios
 
-## Claude: Generate Temporary Scenario
+## Claude: Parse User Input and Generate Scenario
 
-Parse the user's natural language request and generate a structured temporary Scenario dict **in memory**:
+Based on the user's natural-language response, generate a temporary Scenario dict **in memory**:
 
 ```python
 scenario = {
-    "id": "temp-" + (epoch timestamp or random UUID),
-    "name": (short title from user request, max 60 chars),
+    "id": "temp-" + generate_timestamp_or_uuid(),
+    "name": (concise title from user's request, max 60 chars),
     "description": (user's request summarized, max 200 chars),
-    "objective": (what the change accomplishes, max 150 chars),
-    "prompt": (detailed implementation prompt derived from user request)
+    "prompt": (actionable analysis prompt for agents)
 }
 ```
 
-**The prompt should be actionable and specific.** Example:
-```
-"The Order entity needs cancellation support. Implement:
-1. Add a 'cancelReason' optional field to the Order model
-2. Add a 'cancel()' method that validates order state (only 'paid' orders are cancellable)
-3. Expose cancellation through the API (POST /orders/{id}/cancel)
-4. Display a cancel button in the order history UI (only for cancellable orders)
-5. Update and run tests
+**Rules:**
 
-Follow existing patterns for similar operations. Keep changes minimal and focused."
-```
+- Use ONLY the user's actual request as the source
+- Never use example text from the documentation
+- The prompt must guide agents to analyze the codebase
 
-## Show Generated Scenario to User
+## Show Generated Scenario for Confirmation
 
-Display the generated Scenario for verification:
+Display the temporary Scenario you just generated:
 
 ```
-GENERATED SCENARIO
-==================
-ID:          temp-1726234567890
-Name:        Order Cancellation
-Description: Add cancellation support to the order history page
-Objective:   Implement order cancellation with payment state validation
-Prompt:      [full prompt as above]
+PREDICTION SCENARIO FROM YOUR REQUEST
+====================================
+Name:        [Generated title]
+Description: [Summary of request]
 
-Does this match your intent? (yes/no)
+Analysis prompt:
+[Full prompt for agents]
+
+Proceed with prediction? (yes/no)
 ```
 
-Wait for user confirmation. If "no", offer to regenerate with clarification.
+**If user confirms "yes":**
 
-## Phase 1: Setup (2 Agents)
+- Proceed to Phase 1: Validate Repository
 
-Once confirmed, run setup phase to create isolated worktrees for 2 agents:
+**If user says "no":**
+
+- Ask: "What would you like to clarify or change?"
+- Go back and regenerate scenario
+- Show revised Scenario for confirmation
+
+## Phase 1: Validate Repository
+
+Validate that the target repository exists and is readable (no modifications will be made):
 
 ```bash
 cd /Users/byurin/codeStress
 python3 -m src.cli --repo-path <repo-path> \
   --scenario-json '<scenario-json>' \
-  --parallel 2 \
-  --phase setup
+  --predict \
+  --parallel 2
 ```
 
-Extract from output:
-- **base_commit** — Line "Base commit: XXXXXXXX..." (use full SHA for measure phase)
-- **agents** — Map of agent IDs to worktree paths. Output includes:
-  ```
-  Agent A: /path/to/worktree-0
-  Agent B: /path/to/worktree-1
-  ```
-
-Confirm with user: "Setup complete. 2 isolated worktrees created. Invoking Coding Agents now..."
-
-## Phase 2: Coding Agents (REAL CLAUDE AGENTS)
-
-Spawn **exactly 2** independent Claude Coding Agents in parallel. Each agent receives:
-
-**Agent Instructions (identical for both A and B):**
+**Output should show:**
 
 ```
-You are a Coding Agent for the codeStress change drill experiment.
+PREDICTION MODE
+==================================================
+Scenario: [name]
+Agents: 2 (read-only analysis)
+==================================================
 
-Task: {{ scenario.prompt }}
-
-Critical constraints:
-1. Work ONLY in this directory: {{ agent_worktree_path }}
-2. Make ONLY the minimum necessary changes to complete the task
-3. Do NOT modify files unrelated to the requested change
-4. Run tests if present: npm test, python -m pytest, make test, etc.
-5. Report completion when done, with a summary of changes made
-
-Success means:
-- Tests pass (if applicable)
-- Build succeeds (if applicable)
-- The requested change is complete and functional
+Repository validated. Ready for prediction agents.
+(Agents will analyze code without modifying anything)
 ```
 
-**Key points:**
-- Both agents receive the SAME scenario and instructions
-- Each works in its own isolated worktree
-- They run in parallel (not sequentially)
-- Do NOT wait for either agent to complete before moving to measurement
+Confirm with user: "Repository ready. Invoking prediction agents now..."
 
-Wait for both agents to report completion. The measurement phase will analyze their independent implementations.
+## Phase 2: Prediction Agents
 
-**Note on verification:** Whatever agents run in constraint 4 is not recorded. The measure phase re-runs its own detected build/test command and records only that result. If new files are created, instruct agents to `git add` them, or they will not be counted.
+Spawn exactly 2 independent Claude Coding Agents in parallel.
 
-## Phase 3: Measure & Report (All 2 Agents)
+Both agents must:
 
-Run measure phase to capture and compare results from both agents:
+- Work in read-only mode
+- Never edit, create, delete, or write files in the target repository
+- Analyze the requested change
+- Return their prediction as structured JSON
+- Save their prediction to:
+  - results/agent_A/<scenario-id>\_prediction.json
+  - results/agent_B/<scenario-id>\_prediction.json
 
-```bash
+Wait until BOTH agents have completed and their prediction JSON files exist.
+
+Do NOT display the final result yet.
+
+## Phase 3: Collect and Display Predictions
+
+After BOTH agents have completed, run the CLI again to collect their results and display the comparison:
+
+````bash
 cd /Users/byurin/codeStress
-python3 -m src.cli --repo-path <repo-path> \
+
+python3 -m src.cli \
+  --repo-path <repo-path> \
   --scenario-json '<scenario-json>' \
   --parallel 2 \
-  --phase measure \
-  --worktree-path <agent_A_worktree> \
-  --base-commit <base-commit>
+  --predict
+
+## Phase 3: Aggregate and Display Results
+
+Collect predictions from both agents and display in Terminal UI:
+
+```bash
+# (Skill handles this internally)
+# Aggregate the two JSON predictions
+# Build comparison analysis
+# Display terminal UI with:
+#  - Scenario name
+#  - Agent A predictions
+#  - Agent B predictions
+#  - Comparison (consensus/divergence)
+````
+
+The Terminal UI will show:
+
+```
+CODESTRESS
+CHANGE DRILL PREDICTION
+
+Scenario
+  [User's change request]
+
+Agent A
+  Estimated tokens
+  Estimated files
+  Estimated LOC
+  Complexity
+  Implementation approach
+  ... observations
+
+Agent B
+  Estimated tokens
+  Estimated files
+  Estimated LOC
+  Complexity
+  Implementation approach
+  ... observations
+
+COMPARISON
+  Estimated change scope
+  Common points
+  Divergent points
+  Structural observations
+
+KEY: All values are ESTIMATES based on static code analysis.
+These predictions are not guarantees of actual implementation cost.
 ```
 
-**Note:** For parallel mode, pass the first agent's worktree path; the CLI discovers the others.
+Result files saved for evidence:
 
-Show user:
-- **For each agent (A, B):**
-  - Completion status (✓ Completed or ✗ Incomplete)
-  - Files changed, lines added/deleted
-  - Verification status (Build: ✓/✗, Tests: ✓/✗)
-  - Code diff (preview or link)
-
-- **Comparison analysis:**
-  - Files changed: which files did each agent modify? (overlap, divergence)
-  - Diff size: which agent's solution was larger/smaller?
-  - Verification: did both pass tests? Did one fail?
-  - Code quality: any obvious differences in approach?
-
-- **Links to result files:**
-  - Agent A results JSON/Markdown/Diff
-  - Agent B results JSON/Markdown/Diff
-  - Comparison report JSON/Markdown
-
-**Verification caveat:** "Build/Tests" results are from a single detected command, not independent verification. Report as "verification command passed", not "build and tests both passed".
+- `results/agent_A/prediction_{scenario_id}.json` — Structured predictions
+- `results/agent_B/prediction_{scenario_id}.json` — Structured predictions
 
 ## Post-execution Safety Check
 
@@ -169,19 +190,35 @@ git status
 
 Should show: "nothing to commit, working tree clean"
 
-If clean, report: "✓ Original repository remains unmodified"
+If clean, confirm: "✓ Original repository remains unmodified"
 
-Confirm no worktrees leaked:
+## Key Differences from Implementation Mode
 
-```bash
-cd <repo-path>
-git worktree list
-```
+| Aspect         | Implementation                | Prediction                      |
+| -------------- | ----------------------------- | ------------------------------- |
+| Worktrees      | Creates 2 isolated worktrees  | No worktrees                    |
+| File changes   | Agents implement changes      | Agents analyze only (read-only) |
+| Build/Tests    | Runs verification             | No build/test execution         |
+| Git operations | Uses git diff to measure      | No git operations               |
+| Evidence       | JSON + diff files             | JSON predictions only           |
+| Output         | Terminal UI + JSON            | Terminal UI + JSON predictions  |
+| Time           | Minutes (with implementation) | Seconds (analysis only)         |
 
-Any remaining `temp-*` or `<scenario-id>-*` entries should be removed with `git worktree remove --force <path>`.
+## What This Mode Tells You
 
-## Natural Language Input is Primary
+Predictions from this mode help you:
 
-The natural-language request is now the ONLY way to run change-drill. Predefined scenarios in `scenarios.json` are retained for internal/backward compatibility but are not presented to users.
+- Estimate implementation cost before starting
+- Understand different implementation approaches
+- Identify potential coupling/dependency issues
+- Assess changeability impact
+- Make decisions about whether to implement
 
-The temporary Scenario is generated on-the-fly, never persisted to `scenarios.json`, and cleaned up after measurement.
+Predictions are NOT:
+
+- Guarantees of actual implementation
+- Exhaustive file lists
+- Precise LOC counts
+- Final technical decisions
+
+Use predictions to inform decisions; validate with actual implementation if needed.

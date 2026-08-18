@@ -39,6 +39,19 @@ class ComparisonResult:
     scope_analysis: Dict[str, Any]
     patterns: List[str]
 
+    @property
+    def shared_files(self) -> List[str]:
+        """Files changed by all agents."""
+        return self.common_changes
+
+    @property
+    def divergent_files(self) -> List[str]:
+        """Files changed differently by agents (union of all divergent changes)."""
+        all_divergent = set()
+        for files in self.divergent_changes.values():
+            all_divergent.update(files)
+        return sorted(list(all_divergent))
+
 
 class ExperimentAnalyzer:
     """Analyzes and compares multi-agent experiment results."""

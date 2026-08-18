@@ -248,10 +248,16 @@ class ParallelDrill:
 
             print("Saving individual results...")
             for agent_id, evidence in all_evidence.items():
-                json_path, md_path, diff_path = save_experiment_results(
-                    evidence, evidence.diff, self.results_dir / f"agent_{agent_id}"
-                )
-                print(f"  Agent {agent_id}: {json_path.parent.name}")
+                # Save diff file only (no JSON, no Markdown)
+                results_dir = self.results_dir / f"agent_{agent_id}"
+                results_dir.mkdir(parents=True, exist_ok=True)
+
+                file_timestamp = evidence.timestamp.replace(":", "-").replace(".", "-")
+                base = f"{evidence.scenario_id}_{file_timestamp}"
+                diff_path = results_dir / f"{base}.diff"
+                diff_path.write_text(evidence.diff)
+
+                print(f"  Agent {agent_id}: {diff_path.parent.name}/")
 
             print("")
             print("Analyzing results across agents...")
@@ -285,21 +291,7 @@ class ParallelDrill:
 
             comparison = analyzer.analyze()
 
-            # Generate comparison reports
-            comparison_md = ComparisonReportGenerator.generate_markdown(comparison)
-            comparison_json = ComparisonReportGenerator.generate_json(comparison)
-
-            # Save comparison reports
-            comparison_dir = self.results_dir / "comparison"
-            comparison_dir.mkdir(parents=True, exist_ok=True)
-
-            comparison_md_path = comparison_dir / f"comparison_{timestamp.replace(':', '-').replace('.', '-')}.md"
-            comparison_json_path = comparison_dir / f"comparison_{timestamp.replace(':', '-').replace('.', '-')}.json"
-
-            comparison_md_path.write_text(comparison_md)
-            comparison_json_path.write_text(comparison_json)
-
-            print(f"  Comparison: {comparison_md_path.parent.name}/")
+            print("  Comparison analysis complete (results displayed in terminal)")
 
             print("")
             print("Cleaning up worktrees...")
@@ -335,8 +327,6 @@ class ParallelDrill:
                 },
                 "base_commit": self.base_commit,
                 "timestamp": timestamp,
-                "comparison_markdown": str(comparison_md_path),
-                "comparison_json": str(comparison_json_path),
             }
 
         except Exception as e:

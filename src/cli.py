@@ -133,6 +133,11 @@ def main():
         help="Scenario as JSON string (overrides scenarios.json loading)",
     )
     parser.add_argument(
+    "--predict",
+    action="store_true",
+    help="Prediction-only mode: analyze without implementing (no worktrees, no modifications)",
+    )
+    parser.add_argument(
         "--results-dir",
         type=Path,
         default=None,
@@ -163,6 +168,53 @@ def main():
                 scenario_id = args.scenario
 
             scenario = get_scenario_by_id(scenarios, scenario_id)
+
+        # Handle prediction-only mode first (before parallel mode check)
+        if args.predict:
+            from .prediction import PredictionOrchestrator
+
+            print("")
+            print("PREDICTION MODE")
+            print("=" * 60)
+            print(f"Scenario: {scenario.get('name', 'Unknown')}")
+            print(f"Agents: {args.parallel} (read-only analysis)")
+            print("=" * 60)
+            print("")
+
+            orchestrator = PredictionOrchestrator(
+                repo_path=str(args.repo_path),
+                scenario_id=scenario["id"],
+                scenario_name=scenario["name"],
+                scenario_prompt=scenario.get("prompt", ""),
+                num_agents=args.parallel,
+                results_dir=str(results_dir),
+            )
+
+            # Validate repository
+            if not orchestrator.validate_repo():
+                return 1
+
+            print("")
+            print("Repository validated. Ready for prediction agents.")
+            print("")
+            print("(Agents will analyze code without modifying anything)")
+            print("")
+
+            # Save orchestrator state for skill to use
+            state_file = Path(results_dir) / f"prediction_{scenario['id']}_state.json"
+            state_file.parent.mkdir(parents=True, exist_ok=True)
+            state_file.write_text(json.dumps({
+                "scenario_id": scenario["id"],
+                "scenario_name": scenario["name"],
+                "repo_path": str(args.repo_path),
+                "results_dir": str(results_dir),
+                "num_agents": args.parallel,
+            }))
+
+            print(f"State saved to: {state_file}")
+            print("Awaiting agent predictions...")
+            print("")
+            return 0
 
         # Check if parallel mode
         if args.parallel > 1:
