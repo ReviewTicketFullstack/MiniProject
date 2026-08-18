@@ -216,6 +216,7 @@ def main():
                     scenario_prompt="",
                     num_agents=args.parallel,
                     results_dir=str(results_dir),
+                    base_commit=args.base_commit,
                 )
 
                 result = parallel_drill.measure_all()
@@ -275,15 +276,35 @@ def main():
 
         if result["status"] in ("success", "dry_run_success", "setup_complete"):
             if result["status"] == "success":
-                print(f"Status:           Completed")
-                print(f"Files changed:    {result['files_changed']}")
-                print(f"Lines added:      {result['lines_added']}")
-                print(f"Build success:    {'✓' if result['build_success'] else '✗'}")
-                print(f"Tests passed:     {'✓' if result['test_success'] else '✗'}")
-                print("")
-                print(f"Results JSON:     {result['results_json']}")
-                print(f"Results Markdown: {result['results_markdown']}")
-                print(f"Results Diff:     {result['results_diff']}")
+                # Check if parallel or single-agent mode
+                if "agents" in result:
+                    # Parallel mode
+                    print(f"Status:           Completed (parallel mode)")
+                    print(f"Scenario:         {result.get('scenario_id', 'unknown')}")
+                    print(f"Agents:           {result.get('num_agents', '?')}")
+                    print("")
+                    for agent_id, agent_result in result.get("agents", {}).items():
+                        print(f"Agent {agent_id}:")
+                        print(f"  Completed:       {'✓' if agent_result.get('completed') else '✗'}")
+                        print(f"  Files changed:   {agent_result.get('files_changed', '?')}")
+                        print(f"  Lines added:     {agent_result.get('lines_added', '?')}")
+                        print(f"  Build success:   {'✓' if agent_result.get('build_success') else '✗'}")
+                        print(f"  Tests passed:    {'✓' if agent_result.get('test_success') else '✗'}")
+                    print("")
+                    if result.get('comparison_markdown'):
+                        print(f"Comparison Report: {result.get('comparison_markdown')}")
+                        print(f"Comparison JSON:   {result.get('comparison_json')}")
+                else:
+                    # Single-agent mode
+                    print(f"Status:           Completed")
+                    print(f"Files changed:    {result['files_changed']}")
+                    print(f"Lines added:      {result['lines_added']}")
+                    print(f"Build success:    {'✓' if result['build_success'] else '✗'}")
+                    print(f"Tests passed:     {'✓' if result['test_success'] else '✗'}")
+                    print("")
+                    print(f"Results JSON:     {result['results_json']}")
+                    print(f"Results Markdown: {result['results_markdown']}")
+                    print(f"Results Diff:     {result['results_diff']}")
             elif result["status"] == "setup_complete":
                 if "agents" in result and result["agents"]:
                     # Parallel mode

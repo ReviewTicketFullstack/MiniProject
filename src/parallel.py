@@ -31,6 +31,7 @@ class ParallelDrill:
         scenario_prompt: str,
         num_agents: int = 2,
         results_dir: str = "results",
+        base_commit: Optional[str] = None,
     ):
         """
         Initialize parallel drill coordinator.
@@ -42,6 +43,7 @@ class ParallelDrill:
             scenario_prompt: Full scenario prompt for agents
             num_agents: Number of concurrent agents (default 2)
             results_dir: Results directory
+            base_commit: Optional base commit for measurement phase
         """
         self.repo_path = Path(repo_path).resolve()
         self.scenario_id = scenario_id
@@ -49,9 +51,9 @@ class ParallelDrill:
         self.scenario_prompt = scenario_prompt
         self.num_agents = num_agents
         self.results_dir = Path(results_dir).resolve()
+        self.base_commit = base_commit
 
         self.worktrees: Dict[str, Worktree] = {}
-        self.base_commit: Optional[str] = None
         self.agent_results: Dict[str, Dict[str, Any]] = {}
 
     def setup_worktrees(self) -> Dict[str, Any]:
@@ -130,6 +132,50 @@ class ParallelDrill:
         self.agent_results[agent_id] = completion_data
         print(f"Agent {agent_id} completion recorded")
 
+    def discover_worktrees(self) -> Dict[str, "Worktree"]:
+        """Discover existing worktrees for this scenario from git."""
+        import subprocess
+
+        try:
+            result = subprocess.run(
+                ["git", "worktree", "list"],
+                cwd=str(self.repo_path),
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+
+            worktrees = {}
+            matching_paths = []
+
+            # Find all drill-* worktrees for this scenario
+            for line in result.stdout.strip().split('\n'):
+                if not line.strip():
+                    continue
+
+                path_str = line.split()[0]
+
+                # Worktree names are: drill-{scenario_id}-{index}-{pid}
+                if "drill-" in path_str and self.scenario_id in path_str:
+                    matching_paths.append(Path(path_str).resolve())
+
+            # Sort by path to get consistent ordering, assign to A, B, C, ...
+            matching_paths.sort()
+
+            for agent_idx, wt_path in enumerate(matching_paths):
+                if agent_idx >= self.num_agents:
+                    break
+
+                agent_id = chr(65 + agent_idx)
+                wt = Worktree(str(self.repo_path), f"{self.scenario_id}-{agent_idx}")
+                wt.worktree_path = wt_path
+                worktrees[agent_id] = wt
+
+            return worktrees
+        except Exception as e:
+            print(f"Warning: Failed to discover worktrees: {e}")
+            return {}
+
     def measure_all(self) -> Dict[str, Any]:
         """
         Measure results for all agents.
@@ -137,10 +183,14 @@ class ParallelDrill:
         Returns:
             Combined results dictionary
         """
+        # Try to discover worktrees if not already populated
+        if not self.worktrees:
+            self.worktrees = self.discover_worktrees()
+
         if not self.worktrees or not self.base_commit:
             return {
                 "status": "error",
-                "error": "Harness not properly initialized. Call setup_worktrees() first.",
+                "error": "Harness not properly initialized. Call setup_worktrees() first or specify existing worktrees.",
             }
 
         try:
