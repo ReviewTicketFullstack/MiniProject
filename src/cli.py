@@ -127,6 +127,12 @@ def main():
         help="Path to scenarios.json (default: auto-detect from codeStress repo)",
     )
     parser.add_argument(
+        "--scenario-json",
+        type=str,
+        default=None,
+        help="Scenario as JSON string (overrides scenarios.json loading)",
+    )
+    parser.add_argument(
         "--results-dir",
         type=Path,
         default=None,
@@ -138,17 +144,25 @@ def main():
     try:
         codestress_root = Path(__file__).parent.parent
 
-        scenarios_file = args.scenarios_file or (codestress_root / "src" / "scenarios.json")
         results_dir = args.results_dir or (codestress_root / "results")
 
-        scenarios = load_scenarios(scenarios_file)
-
-        if not args.scenario:
-            scenario_id = interactive_scenario_selection(scenarios)
+        # Load scenario from JSON string or predefined catalog
+        if args.scenario_json:
+            try:
+                scenario = json.loads(args.scenario_json)
+            except json.JSONDecodeError as e:
+                print(f"Error: Invalid JSON in --scenario-json: {e}", file=sys.stderr)
+                return 1
         else:
-            scenario_id = args.scenario
+            scenarios_file = args.scenarios_file or (codestress_root / "src" / "scenarios.json")
+            scenarios = load_scenarios(scenarios_file)
 
-        scenario = get_scenario_by_id(scenarios, scenario_id)
+            if not args.scenario:
+                scenario_id = interactive_scenario_selection(scenarios)
+            else:
+                scenario_id = args.scenario
+
+            scenario = get_scenario_by_id(scenarios, scenario_id)
 
         # Check if parallel mode
         if args.parallel > 1:
@@ -271,10 +285,10 @@ def main():
                 print(f"Results Markdown: {result['results_markdown']}")
                 print(f"Results Diff:     {result['results_diff']}")
             elif result["status"] == "setup_complete":
-                if "num_agents" in result:
+                if "agents" in result and result["agents"]:
                     # Parallel mode
                     print(f"Status:           Setup complete (parallel mode)")
-                    print(f"Agents:           {result['num_agents']}")
+                    print(f"Agents:           {len(result['agents'])}")
                     print(f"Base commit:      {result['base_commit']}")
                     print("")
                     for agent_id, info in result.get("agents", {}).items():

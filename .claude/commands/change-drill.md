@@ -1,66 +1,108 @@
 ---
 name: change-drill
-description: Execute a controlled change drill experiment in an isolated Git worktree with a real Claude Coding Agent
+description: Execute a controlled parallel change drill experiment with natural-language input
 ---
 
 # Change Drill Skill
 
-Execute a complete change drill: setup worktree → invoke Coding Agent → measure results.
+Execute a complete change drill with natural-language input: natural language → temporary scenario → 2-agent parallel experiment → measurement → analysis → report.
 
-**Scope: single agent only.** This command orchestrates one Coding Agent. Parallel mode
-(`--parallel N`) creates N worktrees but its measurement and comparison phases are not reachable
-from the CLI, so do not use it here. See `docs/PARALLEL_AGENT_POLICY.md`.
-
-**Do not use `--phase full`.** It does not wait for the agent — it measures immediately after
-creating the worktree and will always report an empty diff. Always use the two-phase flow below.
+**This skill now uses 2-agent parallel execution.** Natural language input is interpreted and structured into a temporary Scenario, then passed to the existing parallel infrastructure.
 
 ## Pre-execution
 
-Get repository path and scenario from user:
+Get repository path and change description from user:
 
 1. Ask: "Which repository should we experiment on?" (default: current directory)
-2. Available scenarios:
-   - `add-cancellation-reason` — Add optional field to Order domain entity
-   - `rename-auth-service` — Refactor: rename a core service
+2. Ask: "What change would you like to test? (Describe in natural language)"
 
-## Phase 1: Setup
+Example user response:
+```
+"Add order cancellation to the order history. Only paid orders should be cancellable. 
+Add a cancel button to each order, validate payment status, and update the order state."
+```
 
-Run setup phase to create isolated worktree:
+## Claude: Generate Temporary Scenario
+
+Parse the user's natural language request and generate a structured temporary Scenario dict **in memory**:
+
+```python
+scenario = {
+    "id": "temp-" + (epoch timestamp or random UUID),
+    "name": (short title from user request, max 60 chars),
+    "description": (user's request summarized, max 200 chars),
+    "objective": (what the change accomplishes, max 150 chars),
+    "prompt": (detailed implementation prompt derived from user request)
+}
+```
+
+**The prompt should be actionable and specific.** Example:
+```
+"The Order entity needs cancellation support. Implement:
+1. Add a 'cancelReason' optional field to the Order model
+2. Add a 'cancel()' method that validates order state (only 'paid' orders are cancellable)
+3. Expose cancellation through the API (POST /orders/{id}/cancel)
+4. Display a cancel button in the order history UI (only for cancellable orders)
+5. Update and run tests
+
+Follow existing patterns for similar operations. Keep changes minimal and focused."
+```
+
+## Show Generated Scenario to User
+
+Display the generated Scenario for verification:
+
+```
+GENERATED SCENARIO
+==================
+ID:          temp-1726234567890
+Name:        Order Cancellation
+Description: Add cancellation support to the order history page
+Objective:   Implement order cancellation with payment state validation
+Prompt:      [full prompt as above]
+
+Does this match your intent? (yes/no)
+```
+
+Wait for user confirmation. If "no", offer to regenerate with clarification.
+
+## Phase 1: Setup (2 Agents)
+
+Once confirmed, run setup phase to create isolated worktrees for 2 agents:
 
 ```bash
 cd /Users/byurin/codeStress
-python3 -m src.cli --repo-path <repo-path> --scenario <scenario-id> --phase setup
+python3 -m src.cli --repo-path <repo-path> \
+  --scenario-json '<scenario-json>' \
+  --parallel 2 \
+  --phase setup
 ```
 
 Extract from output:
-- **worktree_path** — Line "Worktree ready at: /path/..."
-- **base_commit** — Line "Base commit: XXXXXXXX". This is a **truncated display value (8 chars)**.
-  Obtain the **full SHA** for the measure phase by running `git rev-parse HEAD` in the target
-  repository, since setup bases the worktree on `HEAD`. Do not pass the truncated value.
-- **scenario_prompt** — Read the `prompt` field for this scenario ID from `src/scenarios.json`.
-  The CLI does not emit it in single-agent mode.
+- **base_commit** — Line "Base commit: XXXXXXXX..." (use full SHA for measure phase)
+- **agents** — Map of agent IDs to worktree paths. Output includes:
+  ```
+  Agent A: /path/to/worktree-0
+  Agent B: /path/to/worktree-1
+  ```
 
-Note: the setup phase performs **no confirmation prompt and no clean-working-tree check**. Before
-running it, verify the target repo is clean yourself (`git status`), because a dirty tree makes
-the base commit ambiguous.
+Confirm with user: "Setup complete. 2 isolated worktrees created. Invoking Coding Agents now..."
 
-Confirm with user: "Setup complete. Worktree ready. Invoking Coding Agent now..."
+## Phase 2: Coding Agents (REAL CLAUDE AGENTS)
 
-## Phase 2: Coding Agent (REAL CLAUDE AGENT)
+Spawn **exactly 2** independent Claude Coding Agents in parallel. Each agent receives:
 
-Spawn a real Claude Coding Agent to implement the scenario:
-
-**Agent Instructions:**
+**Agent Instructions (identical for both A and B):**
 
 ```
 You are a Coding Agent for the codeStress change drill experiment.
 
-Task: {{ scenario_prompt }}
+Task: {{ scenario.prompt }}
 
 Critical constraints:
-1. Work ONLY in this directory: {{ worktree_path }}
+1. Work ONLY in this directory: {{ agent_worktree_path }}
 2. Make ONLY the minimum necessary changes to complete the task
-3. Do NOT modify files unrelated to the scenario
+3. Do NOT modify files unrelated to the requested change
 4. Run tests if present: npm test, python -m pytest, make test, etc.
 5. Report completion when done, with a summary of changes made
 
@@ -70,40 +112,51 @@ Success means:
 - The requested change is complete and functional
 ```
 
-Wait for the Agent to report completion.
+**Key points:**
+- Both agents receive the SAME scenario and instructions
+- Each works in its own isolated worktree
+- They run in parallel (not sequentially)
+- Do NOT wait for either agent to complete before moving to measurement
 
-Notes on what the harness does and does not capture:
-- Whatever the agent runs in constraint 4 is **not recorded**. The measure phase re-runs its own
-  single detected command and records only that result.
-- Measurement uses `git diff <base_commit>`, which **excludes untracked files**. If the agent
-  creates new files, instruct it to `git add` them, or they will not be counted.
+Wait for both agents to report completion. The measurement phase will analyze their independent implementations.
 
-## Phase 3: Measure & Report
+**Note on verification:** Whatever agents run in constraint 4 is not recorded. The measure phase re-runs its own detected build/test command and records only that result. If new files are created, instruct agents to `git add` them, or they will not be counted.
 
-Run measure phase to capture results:
+## Phase 3: Measure & Report (All 2 Agents)
+
+Run measure phase to capture and compare results from both agents:
 
 ```bash
 cd /Users/byurin/codeStress
-python3 -m src.cli --repo-path <repo-path> --scenario <scenario-id> \
+python3 -m src.cli --repo-path <repo-path> \
+  --scenario-json '<scenario-json>' \
+  --parallel 2 \
   --phase measure \
-  --worktree-path <worktree-path> \
+  --worktree-path <agent_A_worktree> \
   --base-commit <base-commit>
 ```
 
-Pass the **full** base commit SHA to `--base-commit`.
+**Note:** For parallel mode, pass the first agent's worktree path; the CLI discovers the others.
 
 Show user:
-- Completion status (✓ Completed or ✗ Incomplete)
-- Files changed, lines added (note: the CLI does not print lines deleted; read it from the JSON)
-- Verification status (Build: ✓/✗, Tests: ✓/✗)
-- Links to result files
+- **For each agent (A, B):**
+  - Completion status (✓ Completed or ✗ Incomplete)
+  - Files changed, lines added/deleted
+  - Verification status (Build: ✓/✗, Tests: ✓/✗)
+  - Code diff (preview or link)
 
-**When reporting verification, state the caveat.** `Tests: ✓` is not an independent test result —
-the harness runs one detected command and copies its outcome to both fields. Report it as
-"verification command passed", not as "build and tests both passed".
+- **Comparison analysis:**
+  - Files changed: which files did each agent modify? (overlap, divergence)
+  - Diff size: which agent's solution was larger/smaller?
+  - Verification: did both pass tests? Did one fail?
+  - Code quality: any obvious differences in approach?
 
-Similarly, "Completed" means the verification command exited 0. It does **not** mean the requested
-change was actually implemented. Confirm that separately by reading the diff.
+- **Links to result files:**
+  - Agent A results JSON/Markdown/Diff
+  - Agent B results JSON/Markdown/Diff
+  - Comparison report JSON/Markdown
+
+**Verification caveat:** "Build/Tests" results are from a single detected command, not independent verification. Report as "verification command passed", not "build and tests both passed".
 
 ## Post-execution Safety Check
 
@@ -118,12 +171,17 @@ Should show: "nothing to commit, working tree clean"
 
 If clean, report: "✓ Original repository remains unmodified"
 
-Also confirm no worktree leaked. The measure phase removes it, but if measurement was skipped or
-failed, it persists:
+Confirm no worktrees leaked:
 
 ```bash
 cd <repo-path>
 git worktree list
 ```
 
-Any remaining `drill-*` entry should be removed with `git worktree remove --force <path>`.
+Any remaining `temp-*` or `<scenario-id>-*` entries should be removed with `git worktree remove --force <path>`.
+
+## Natural Language Input is Primary
+
+The natural-language request is now the ONLY way to run change-drill. Predefined scenarios in `scenarios.json` are retained for internal/backward compatibility but are not presented to users.
+
+The temporary Scenario is generated on-the-fly, never persisted to `scenarios.json`, and cleaned up after measurement.
