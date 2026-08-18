@@ -1,4 +1,9 @@
-"""Report generation from experiment evidence."""
+"""Report generation from experiment evidence.
+
+증거 → 리포트 변환: JSON(구조화), Markdown(인간 가독성), Diff(원본 통합)의 세 파일 생성.
+저장소 활용: results/<scenario_id>_<timestamp>/ 디렉토리에 결과 저장.
+해석 제약: 증거는 객관적으로 기록하고, 해석은 사용자가 판단하도록 설계.
+"""
 
 from pathlib import Path
 from typing import Optional

@@ -1,4 +1,9 @@
-"""Main harness orchestrator for change drills."""
+"""Main harness orchestrator for change drills.
+
+단일 에이전트 워크플로우: setup() → (에이전트 외부에서 작업) → measure_and_report().
+두 단계 분리: 프로세스 간 상태 비영속, CLI가 두 번 호출하며 값을 전달. --phase full도 지원하지만 대기하지 않음.
+측정 → 리포트: 변경 비용 측정, 검증 실행, 결과 저장, 정리. 미완료도 기록.
+"""
 
 import json
 from pathlib import Path

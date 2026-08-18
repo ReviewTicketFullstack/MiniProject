@@ -1,4 +1,9 @@
-"""Analysis and comparison of multi-agent experiment results."""
+"""Analysis and comparison of multi-agent experiment results.
+
+에이전트 간 비교: 여러 에이전트의 측정값(파일/라인/테스트)을 수집 및 비교 분석.
+패턴 탐지: 공통 변경/분기 변경, 범위 min/max/avg, 관찰 가능 정규성 추출.
+증거 분리: 증거(관측값)와 해석(그 의미)을 명확히 분리. CLI에서 도달 불가능한 모듈.
+"""
 
 from dataclasses import dataclass
 from typing import Dict, List, Any, Optional

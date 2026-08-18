@@ -1,4 +1,9 @@
-"""Measurement and evidence collection from change drills."""
+"""Measurement and evidence collection from change drills.
+
+변경 비용 측정: git diff를 파싱해 파일 수, 라인 변경량, 테스트 파일 영향도 추출.
+빌드/검증 실행: 저장소 타입에 맞는 단일 명령 탐지 및 실행 (결과 저장).
+증거 수집: 측정값과 검증 결과를 ExperimentEvidence 객체로 구조화.
+"""
 
 import json
 import subprocess

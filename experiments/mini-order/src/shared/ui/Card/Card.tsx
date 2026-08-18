@@ -1,3 +1,4 @@
+// 범용 카드 컴포넌트.
 import type { HTMLAttributes } from "react";
 
 export interface CardProps extends HTMLAttributes<HTMLDivElement> {}

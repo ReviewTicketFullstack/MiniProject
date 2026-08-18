@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""CLI entry point for change-drill experiments."""
+"""CLI entry point for change-drill experiments.
+
+사용자 인터페이스: 시나리오 선택, phase 구분(setup/measure/full), 병렬 모드 설정.
+두 harness 프로세스(setup → measure)를 순차로 호출하고 결과를 출력. 단일/병렬 모드 모두 지원.
+"""
 
 import argparse
 import json

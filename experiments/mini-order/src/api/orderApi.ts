@@ -1,3 +1,4 @@
+// 주문 생성 및 조회 API 래퍼.
 import { request } from "@/shared/api";
 import type { ID, Order } from "@/entities/order";
 

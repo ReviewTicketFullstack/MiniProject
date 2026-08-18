@@ -1,3 +1,4 @@
+// 라우팅 설정: 경로 → 페이지 매핑, 인증 보호, 리다이렉트 처리.
 import { Routes, Route, Navigate } from "react-router-dom";
 import { CustomerLayout } from "@/shared/layout";
 import { useAuth } from "@/app/providers";

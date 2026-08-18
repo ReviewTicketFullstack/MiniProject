@@ -1,4 +1,8 @@
-"""Git worktree management for isolated experiments."""
+"""Git worktree management for isolated experiments.
+
+독립 실험 환경 생성: git worktree add --detach를 사용해 임시 체크아웃 생성.
+에이전트의 코드 변경이 이루어질 격리된 Git 상태를 관리하고, 실험 후 정리. 단일/병렬 모드 모두에서 사용.
+"""
 
 import subprocess
 import os

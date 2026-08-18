@@ -1,3 +1,4 @@
+// Mock API 클라이언트: 네트워크 요청을 시뮬레이션하는 가게/메뉴/주문 데이터 반환.
 import { messageForErrorCode } from "@/shared/api/errorMessages";
 import { clearToken, getToken } from "@/shared/lib/token";
 import type { Store } from "@/entities/store";

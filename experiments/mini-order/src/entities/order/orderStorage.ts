@@ -1,3 +1,4 @@
+// 로컬스토리지 주문 이력 관리.
 import type { Order } from "./model";
 
 const ORDERS_KEY = "review_ticket_orders";

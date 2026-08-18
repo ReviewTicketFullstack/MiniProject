@@ -1,3 +1,4 @@
+// 리뷰 API 래퍼 (현재 미사용).
 import { request } from "@/shared/api";
 import type { ID, ISODateTime } from "@/entities/order";
 

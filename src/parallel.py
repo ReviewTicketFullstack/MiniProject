@@ -1,4 +1,9 @@
-"""Parallel change drill orchestration for multiple agents."""
+"""Parallel change drill orchestration for multiple agents.
+
+병렬 워크플로우: setup_worktrees() → N개 독립 worktree 생성 (측정은 CLI에서 도달 불가).
+상태 비영속: setup과 measure 프로세스 분리, 중간 상태 미저장. measure_all()는 존재하나 unreachable.
+분석 통합: 가능한 코드는 있으나 병렬 측정 단계가 작동하지 않아 analysis.py와 연결 불가.
+"""
 
 import json
 from pathlib import Path

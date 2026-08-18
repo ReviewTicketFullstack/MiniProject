@@ -1,3 +1,4 @@
+// 사용자 도메인 모델 (인증 정보).
 export type UserRole = "CUSTOMER" | "OWNER";
 
 export interface User {

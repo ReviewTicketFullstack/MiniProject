@@ -1,3 +1,4 @@
+// 가게 목록 캐싱.
 import type { Store } from "./model";
 
 export const STORE_CACHE_KEY = "review_ticket_stores";

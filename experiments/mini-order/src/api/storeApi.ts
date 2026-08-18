@@ -1,3 +1,4 @@
+// 가게 목록 및 상세 조회 API 래퍼.
 import { request } from "@/shared/api";
 import type { Store } from "@/entities/store";
 import type { Menu } from "@/entities/menu";

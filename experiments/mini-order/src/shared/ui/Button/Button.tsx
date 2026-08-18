@@ -1,3 +1,4 @@
+// 범용 버튼 컴포넌트.
 import type { ButtonHTMLAttributes } from "react";
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {}

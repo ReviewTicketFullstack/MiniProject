@@ -1,3 +1,4 @@
+// 리뷰 시간 계산 유틸.
 import type { ISODateTime } from "./model";
 
 export function getRemainingReviewTime(reviewDeadline: ISODateTime): number {
