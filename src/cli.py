@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """CLI entry point for change-drill experiments.
 
-사용자 인터페이스: 시나리오 선택, phase 구분(setup/measure/full), 병렬 모드 설정.
+사용자 인터페이스: 시나리오 입력(--scenario-json), phase 구분(setup/measure/full), 병렬 모드 설정.
 두 harness 프로세스(setup → measure)를 순차로 호출하고 결과를 출력. 단일/병렬 모드 모두 지원.
 """
 
@@ -105,48 +105,6 @@ def run_predict_report(results_dir: Path, scenario_id: str, scenario_name: str) 
     return 0
 
 
-def load_scenarios(scenarios_path: Path) -> dict:
-    """Load scenario catalog from JSON file."""
-    if not scenarios_path.exists():
-        raise FileNotFoundError(f"Scenarios file not found: {scenarios_path}")
-
-    with open(scenarios_path) as f:
-        data = json.load(f)
-    return data.get("scenarios", [])
-
-
-def interactive_scenario_selection(scenarios: list) -> str:
-    """Prompt user to select a scenario."""
-    print("Available scenarios:")
-    print("")
-    for i, scenario in enumerate(scenarios, 1):
-        print(f"{i}. {scenario['name']}")
-        print(f"   ID: {scenario['id']}")
-        print(f"   {scenario['description']}")
-        print("")
-
-    while True:
-        selection = input("Select scenario (number or ID): ").strip()
-        try:
-            idx = int(selection) - 1
-            if 0 <= idx < len(scenarios):
-                return scenarios[idx]["id"]
-        except ValueError:
-            for scenario in scenarios:
-                if scenario["id"] == selection:
-                    return scenario["id"]
-
-        print("Invalid selection. Try again.")
-
-
-def get_scenario_by_id(scenarios: list, scenario_id: str) -> dict:
-    """Find scenario by ID."""
-    for s in scenarios:
-        if s["id"] == scenario_id:
-            return s
-    raise ValueError(f"Scenario not found: {scenario_id}")
-
-
 def confirm_experiment(repo_path: Path, scenario: dict) -> bool:
     """Get user confirmation to proceed with experiment."""
     print("=" * 60)
@@ -180,11 +138,6 @@ def main():
         help="Path to target Git repository (default: current directory)",
     )
     parser.add_argument(
-        "--scenario",
-        type=str,
-        help="Scenario ID to run (default: interactive selection)",
-    )
-    parser.add_argument(
         "--phase",
         type=str,
         choices=["setup", "measure", "full"],
@@ -213,16 +166,10 @@ def main():
         help="Number of parallel agents (1 = single agent, 2+ = parallel mode)",
     )
     parser.add_argument(
-        "--scenarios-file",
-        type=Path,
-        default=None,
-        help="Path to scenarios.json (default: auto-detect from codeStress repo)",
-    )
-    parser.add_argument(
         "--scenario-json",
         type=str,
         default=None,
-        help="Scenario as JSON string (overrides scenarios.json loading)",
+        help="Scenario as JSON string (required; generated from the user's request)",
     )
     parser.add_argument(
         "--predict",
@@ -280,23 +227,20 @@ def main():
                 scenario_name=args.scenario_name or args.scenario_id,
             )
 
-        # Load scenario from JSON string or predefined catalog
-        if args.scenario_json:
-            try:
-                scenario = json.loads(args.scenario_json)
-            except json.JSONDecodeError as e:
-                print(f"Error: Invalid JSON in --scenario-json: {e}", file=sys.stderr)
-                return 1
-        else:
-            scenarios_file = args.scenarios_file or (codestress_root / "src" / "scenarios.json")
-            scenarios = load_scenarios(scenarios_file)
+        # Scenarios come from natural-language input only; there is no catalog.
+        if not args.scenario_json:
+            print(
+                "Error: --scenario-json is required "
+                "(scenarios are generated from your natural-language request)",
+                file=sys.stderr,
+            )
+            return 1
 
-            if not args.scenario:
-                scenario_id = interactive_scenario_selection(scenarios)
-            else:
-                scenario_id = args.scenario
-
-            scenario = get_scenario_by_id(scenarios, scenario_id)
+        try:
+            scenario = json.loads(args.scenario_json)
+        except json.JSONDecodeError as e:
+            print(f"Error: Invalid JSON in --scenario-json: {e}", file=sys.stderr)
+            return 1
 
         # Handle prediction-only mode first (before parallel mode check)
         if args.predict:
