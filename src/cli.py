@@ -13,6 +13,98 @@ from pathlib import Path
 from .harness import Harness
 
 
+def load_agent_predictions(results_dir: Path, scenario_id: str, scenario_name: str):
+    """Load prediction JSON evidence written by the read-only agents.
+
+    Looks for results/agent_<ID>/prediction_<scenario_id>.json and returns
+    ({agent_id: AgentPrediction}, [error strings]). Callers decide whether a
+    partial load is acceptable; nothing is printed here.
+    """
+    from .prediction import AgentPrediction
+
+    predictions = {}
+    errors = []
+
+    for agent_dir in sorted(results_dir.glob("agent_*")):
+        evidence = agent_dir / f"prediction_{scenario_id}.json"
+        if not evidence.exists():
+            continue
+
+        try:
+            data = json.loads(evidence.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            errors.append(f"{evidence}: unreadable or malformed JSON ({exc})")
+            continue
+
+        agent_id = data.get("agent_id") or agent_dir.name.replace("agent_", "")
+
+        try:
+            predictions[agent_id] = AgentPrediction(
+                agent_id=agent_id,
+                scenario_name=data.get("scenario_name", scenario_name),
+                timestamp=data.get("timestamp", ""),
+                estimated_files_changed=int(data["estimated_files_changed"]),
+                estimated_lines_added=int(data["estimated_lines_added"]),
+                estimated_lines_deleted=int(data["estimated_lines_deleted"]),
+                estimated_tokens=int(data["estimated_tokens"]),
+                implementation_approach=data.get("implementation_approach", ""),
+                likely_files=data.get("likely_files", []),
+                complexity_level=str(data["complexity_level"]),
+                coupling_observations=data.get("coupling_observations", ""),
+                duplication_observations=data.get("duplication_observations", ""),
+                responsibility_observations=data.get("responsibility_observations", ""),
+                changeability_observations=data.get("changeability_observations", ""),
+                analysis_notes=data.get("analysis_notes", ""),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            errors.append(f"{evidence}: missing or invalid field ({exc})")
+
+    return predictions, errors
+
+
+def run_predict_report(results_dir: Path, scenario_id: str, scenario_name: str) -> int:
+    """Render the deterministic prediction report from saved agent evidence.
+
+    Read-only: loads JSON, aggregates, prints. No agents, no worktrees, no
+    changes to the analysed repository.
+    """
+    from .prediction import PredictionOrchestrator
+    from .prediction_report import print_prediction_result
+
+    if not results_dir.exists():
+        print(f"Error: results directory not found: {results_dir}", file=sys.stderr)
+        return 1
+
+    predictions, errors = load_agent_predictions(results_dir, scenario_id, scenario_name)
+
+    for error in errors:
+        print(f"Error: {error}", file=sys.stderr)
+
+    if errors:
+        return 1
+
+    if not predictions:
+        print(
+            f"Error: no prediction evidence for scenario '{scenario_id}' under "
+            f"{results_dir} (expected agent_*/prediction_{scenario_id}.json)",
+            file=sys.stderr,
+        )
+        return 1
+
+    orchestrator = PredictionOrchestrator(
+        repo_path=str(Path.cwd()),
+        scenario_id=scenario_id,
+        scenario_name=scenario_name,
+        scenario_prompt="",
+        num_agents=len(predictions),
+        results_dir=str(results_dir),
+    )
+    orchestrator.predictions = predictions
+
+    print_prediction_result(orchestrator.analyze_predictions(), scenario_name)
+    return 0
+
+
 def load_scenarios(scenarios_path: Path) -> dict:
     """Load scenario catalog from JSON file."""
     if not scenarios_path.exists():
@@ -133,9 +225,30 @@ def main():
         help="Scenario as JSON string (overrides scenarios.json loading)",
     )
     parser.add_argument(
-    "--predict",
-    action="store_true",
-    help="Prediction-only mode: analyze without implementing (no worktrees, no modifications)",
+        "--predict",
+        action="store_true",
+        help="Prediction-only mode: validate the repo and prepare read-only agents "
+             "(no worktrees, no modifications, no report)",
+    )
+    parser.add_argument(
+        "--predict-report",
+        action="store_true",
+        help="Render the prediction report from saved agent evidence "
+             "(requires --scenario-id; no agents, no worktrees)",
+    )
+    parser.add_argument(
+        "--scenario-id",
+        type=str,
+        default=None,
+        help="Scenario ID whose prediction evidence should be rendered "
+             "(used with --predict-report)",
+    )
+    parser.add_argument(
+        "--scenario-name",
+        type=str,
+        default=None,
+        help="Scenario title shown in the prediction report "
+             "(used with --predict-report; defaults to the scenario ID)",
     )
     parser.add_argument(
         "--results-dir",
@@ -150,6 +263,22 @@ def main():
         codestress_root = Path(__file__).parent.parent
 
         results_dir = args.results_dir or (codestress_root / "results")
+
+        # Report-only mode: render saved evidence. Runs standalone, so it must
+        # not touch scenario catalogs, agents, worktrees or the target repo.
+        if args.predict_report:
+            if not args.scenario_id:
+                print(
+                    "Error: --predict-report requires --scenario-id",
+                    file=sys.stderr,
+                )
+                return 1
+
+            return run_predict_report(
+                results_dir=Path(results_dir),
+                scenario_id=args.scenario_id,
+                scenario_name=args.scenario_name or args.scenario_id,
+            )
 
         # Load scenario from JSON string or predefined catalog
         if args.scenario_json:
@@ -213,6 +342,14 @@ def main():
 
             print(f"State saved to: {state_file}")
             print("Awaiting agent predictions...")
+            print("")
+            print("When both agents have written their evidence, render the report:")
+            print(
+                f"  python3 -m src.cli --predict-report"
+                f" --results-dir {results_dir}"
+                f" --scenario-id {scenario['id']}"
+                f" --scenario-name \"{scenario['name']}\""
+            )
             print("")
             return 0
 
