@@ -19,9 +19,8 @@ from .analysis import (
     ComparisonReportGenerator,
 )
 
-
+# git worktree 병렬수행
 class ParallelDrill:
-    """Orchestrates parallel change drills with multiple agents."""
 
     def __init__(
         self,
@@ -29,13 +28,11 @@ class ParallelDrill:
         scenario_id: str,
         scenario_name: str,
         scenario_prompt: str,
-        num_agents: int = 2,
+        num_agents: int = 2, 
         results_dir: str = "results",
         base_commit: Optional[str] = None,
     ):
-        """
-        Initialize parallel drill coordinator.
-
+        """""
         Args:
             repo_path: Target repository path
             scenario_id: Scenario identifier
@@ -58,10 +55,7 @@ class ParallelDrill:
 
     def setup_worktrees(self) -> Dict[str, Any]:
         """
-        Create isolated worktrees for each agent.
-
-        Returns:
-            Dictionary with setup info for all agents
+        agent 수만큼 git worktree 생성. 각 agent 의 작업정보반환
         """
         try:
             print(f"Setting up parallel drill: {self.scenario_id}")
@@ -123,17 +117,14 @@ class ParallelDrill:
 
     def record_agent_completion(self, agent_id: str, completion_data: Dict[str, Any]) -> None:
         """
-        Record that an agent has completed its work.
-
-        Args:
-            agent_id: Agent identifier (A, B, C, ...)
-            completion_data: Data from agent (e.g., files modified count)
+        특정 agent 가 작업을 완료했음을 전달받음.
+        해당 agent 의 결과 데이터를 agent_results 에 기록
         """
         self.agent_results[agent_id] = completion_data
         print(f"Agent {agent_id} completion recorded")
 
     def discover_worktrees(self) -> Dict[str, "Worktree"]:
-        """Discover existing worktrees for this scenario from git."""
+        """git 에 이미 존재하는 해당 scenario 의 worktree 를 찾아 agent A, B, C 등의 순서로 매핑"""
         import subprocess
 
         try:
@@ -178,10 +169,7 @@ class ParallelDrill:
 
     def measure_all(self) -> Dict[str, Any]:
         """
-        Measure results for all agents.
-
-        Returns:
-            Combined results dictionary
+        모든 worktree의 결과 측정하고 agent 간 결과 비교 후 worktree 정리
         """
         # Try to discover worktrees if not already populated
         if not self.worktrees:

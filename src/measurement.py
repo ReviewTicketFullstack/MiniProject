@@ -15,7 +15,7 @@ from datetime import datetime
 
 @dataclass
 class FileDiff:
-    """Statistics for a single changed file."""
+    """변경된 파일 하나의 정보"""
     path: str
     status: str  # A=added, M=modified, D=deleted, R=renamed
     lines_added: int = 0
@@ -25,7 +25,7 @@ class FileDiff:
 
 @dataclass
 class VerificationResult:
-    """Result of build/test verification."""
+    """빌드와 테스트 검증 결과"""
     build_success: bool
     test_success: bool
     build_output: str = ""
@@ -36,7 +36,7 @@ class VerificationResult:
 
 @dataclass
 class ChangeCost:
-    """Measurement of change cost."""
+    """전체 코드 변경량"""
     total_files_changed: int
     total_lines_added: int
     total_lines_deleted: int
@@ -47,7 +47,7 @@ class ChangeCost:
 
 def parse_diff(diff_text: str) -> ChangeCost:
     """
-    Parse unified diff output to extract change metrics.
+    git diff 결과를 분석하여 변경 파일 수와 코드 변경량 계산
 
     Args:
         diff_text: Output from `git diff`
@@ -90,7 +90,7 @@ def parse_diff(diff_text: str) -> ChangeCost:
 
 
 def _is_test_file(path: str) -> bool:
-    """Simple heuristic to detect test files."""
+    """파일 경로를 보고 테스트 파일인지 추정"""
     return (
         "test" in path.lower()
         or "spec" in path.lower()
@@ -102,7 +102,7 @@ def _is_test_file(path: str) -> bool:
 
 def detect_build_command(repo_path: Path) -> str:
     """
-    Detect repository's build command with simple heuristics.
+    저장소 파일 구조 보고 실행할 빌드/검증 명령어 추정
 
     Returns:
         Build command string (e.g., "make", "npm run build", "python -m pytest")
@@ -124,7 +124,7 @@ def detect_build_command(repo_path: Path) -> str:
 
 def run_verification(worktree_path: Path, repo_path: Path) -> VerificationResult:
     """
-    Run build and test commands in the worktree.
+    worktree 에서 빌드 명령 실행하고 성공/실패 및 출력결과를 verificationResult 로 반환
 
     Args:
         worktree_path: Path to the isolated worktree
@@ -167,7 +167,7 @@ def run_verification(worktree_path: Path, repo_path: Path) -> VerificationResult
 
 @dataclass
 class ExperimentEvidence:
-    """Complete evidence from a single experiment run."""
+    """하나의 agent 실험에서 발생한 모든 측정 근거"""
     scenario_id: str
     scenario_name: str
     timestamp: str
@@ -180,7 +180,7 @@ class ExperimentEvidence:
     notes: str = ""
 
     def to_dict(self) -> Dict:
-        """Convert to serializable dictionary."""
+        """ExperimentEvidence 객체를 JSON 저장이 가능한 dictionary 형태로 변환"""
         return {
             "scenario_id": self.scenario_id,
             "scenario_name": self.scenario_name,
@@ -193,5 +193,5 @@ class ExperimentEvidence:
         }
 
     def to_json(self) -> str:
-        """Serialize to JSON (without diff, which is stored separately)."""
+        """ExperimentEvidence 를 JSON 문자열로 직렬화"""
         return json.dumps(self.to_dict(), indent=2)

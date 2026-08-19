@@ -242,7 +242,7 @@ def main():
             print(f"Error: Invalid JSON in --scenario-json: {e}", file=sys.stderr)
             return 1
 
-        # Handle prediction-only mode first (before parallel mode check)
+        # 병렬모드 확인 전 예측 전용 모드부터
         if args.predict:
             from .prediction import PredictionOrchestrator
 
