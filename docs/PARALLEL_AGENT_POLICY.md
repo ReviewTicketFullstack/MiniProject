@@ -1,339 +1,72 @@
-# Parallel Agent Execution Policy
+# 병렬 Agent 실행 정책
 
-**Last Updated:** 2026-08-16
-**Version:** 1.1
-**Status:** Active (policy) / Partially implemented (enforcement)
+**최종 수정:** 2026-08-19
 
----
+## 요약
 
-## ⚠️ Implementation Status
+| 항목 | 값 | 코드로 강제? |
+|---|---|---|
+| 최소 Agent | 1 | — |
+| CLI 기본값 | 1 (`--parallel`) | ✅ |
+| 예측 모드 | **정확히 2개** | ⚠️ 스킬 규약 |
+| 구현 모드 권장 | 3개 | ❌ 관례 |
+| 최대 Agent | 3개 | ❌ **미강제** — `--parallel` 범위 검증 없음 |
 
-This document states **policy**. Much of it is not yet enforced or reachable in code. Read this
-table before relying on any guarantee below.
+`--parallel 4` 이상도 CLI가 그대로 수용하며 그만큼 worktree를 만든다.
 
-| Policy item | Implemented? |
+## 왜 상한이 3인가
+
+- **자원**: worktree마다 체크아웃 사본이 필요하다. 3개가 실행 시간과 자원의 균형점.
+- **증거 품질**: 독립 실행 3회면 구현 방식의 편차를 관찰하기에 충분하다. 그 이상은 수익 체감.
+- **격리 복잡도**: worktree 관리가 3개까지는 안정적으로 확장된다.
+
+## 모드별 실행 모델
+
+### 예측 모드 — Agent 2개, 읽기 전용
+
+Worktree를 만들지 않는다. 두 Agent가 **동일한 프롬프트**로 독립 분석하고,
+각자 `results/agent_{A,B}/prediction_<id>.json`에 예측을 기록한다.
+
+두 예측의 차이가 곧 신호다. 수치가 수렴하면 추정 신뢰도가 높고,
+벌어지면 그 변경에 대해 코드베이스의 해석 여지가 크다는 뜻이다.
+
+Agent는 대상 저장소의 파일을 **생성·수정·삭제·이름변경할 수 없다.**
+
+### 구현 모드 — Agent N개, 격리된 Worktree
+
+각 Agent는 `git worktree add --detach`로 만든 자기 디렉터리에서만 작업한다.
+
+| 보장 | 상태 |
 |---|---|
-| Create 1–3 isolated worktrees | ✅ Yes |
-| CLI default agent count | ⚠️ Defaults to **1**, not 3 |
-| Hard limit of 3 agents | ❌ **Not enforced** — no range validation on `--parallel` |
-| Concurrent agent execution | ⚠️ Performed by the assistant, not the harness |
-| Per-agent measurement | ❌ Unreachable from the CLI |
-| Comparison report generation | ❌ Unreachable from the CLI |
-| Automatic worktree cleanup (parallel) | ❌ Does not occur |
-| Pre-execution checks | ❌ None implemented |
-| Per-agent failure isolation | ❌ Not implemented |
+| Agent별 독립 Worktree | ✅ |
+| 원본 저장소 미변경 | ✅ (worktree 메타데이터만 `.git/worktrees/`에 기록) |
+| 쓰기 범위 제한 | ⚠️ 프롬프트 지시일 뿐, 파일시스템 샌드박스는 없음 |
+| Agent별 개별 측정 | ✅ (`discover_worktrees()`로 measure 단계 복구) |
+| Agent 간 비교 분석 | ✅ (`analysis.py`) |
 
-**Root cause for the unreachable items:** `--phase measure --parallel N` constructs a fresh
-`ParallelDrill` whose worktree map is empty, then calls `measure_all()`, which guards on exactly
-that condition. It always exits with:
+## 실행 절차
 
-```
-Error: Harness not properly initialized. Call setup_worktrees() first.
-```
-
-No state is persisted between the setup process and the measure process.
-
----
-
-## Policy Statement
-
-### Agent Execution Model
-
-codeStress supports **parallel execution of up to 3 independent Claude Coding Agents** for conducting concurrent change drill experiments on the same scenario.
-
-### Limits
-
-| Parameter | Value | Enforced in code? |
-|-----------|-------|---|
-| Minimum Agents | 1 (single-agent mode) | — |
-| CLI Default | 1 | ✅ `--parallel` defaults to `1` |
-| Recommended for parallel mode | 3 | ❌ Convention only |
-| Maximum Agents | 3 (policy limit) | ❌ **Not enforced** |
-| Agents Beyond 3 | Not supported | ❌ Accepted by the CLI anyway |
-
-### Core Principle
-
-**No more than 3 agents may execute concurrently in a single change drill experiment.**
-
----
-
-## Why This Limit?
-
-### Resource Efficiency
-
-- **Concurrent Execution:** 3 agents running simultaneously maintain wall-clock time efficiency
-- **Worktree Overhead:** Each agent requires an isolated Git worktree; 3 is a reasonable balance
-- **Verification Load:** Sequential verification after agent completion remains manageable
-
-### Evidence Quality
-
-- **Biased Sampling Avoidance:** 3 independent runs capture implementation variation
-- **Statistical Sufficiency:** Enough diversity to observe natural implementation choices
-- **Not Exhaustive:** Beyond 3, diminishing returns without corresponding benefit
-
-### System Constraints
-
-- **Claude Code Runtime:** Tested stable with 2 agents; designed for up to 3
-- **Resource Consumption:** Parallel I/O, file system load reasonable with 3 agents
-- **Isolation Complexity:** Worktree management scales reliably to 3; beyond requires different architecture
-
----
-
-## Implementation Details
-
-### User Configuration
+**예측 모드**
 
 ```bash
-# Single-agent (CLI default — --parallel may be omitted)
-python3 -m src.cli --repo-path <repo> --scenario <id> --parallel 1
-
-# Dual-agent
-python3 -m src.cli --repo-path <repo> --scenario <id> --parallel 2
-
-# Tri-agent (policy maximum)
-python3 -m src.cli --repo-path <repo> --scenario <id> --parallel 3
-
-# Violates policy, but IS NOT REJECTED by the CLI today.
-# No range validation exists; this creates 4 worktrees.
-python3 -m src.cli --repo-path <repo> --scenario <id> --parallel 4
+python3 -m src.cli --repo-path <repo> --scenario-json '<json>' --predict --parallel 2
+# Agent A, B 실행 → 각자 JSON 저장
+python3 -m src.cli --predict-report --results-dir results \
+  --scenario-id <id> --scenario-name "<name>"
 ```
 
-To make the limit real, the CLI would need a guard such as:
+**구현 모드**
 
-```python
-if not 1 <= args.parallel <= 3:
-    raise ValueError("--parallel must be 1-3")
+```bash
+python3 -m src.cli --repo-path <repo> --scenario <id> --phase setup --parallel 3
+# Agent 3개가 각 worktree에서 구현
+python3 -m src.cli --repo-path <repo> --scenario <id> --phase measure --parallel 3 \
+  --worktree-path <path> --base-commit <sha>
 ```
 
-This guard is **not present** in `src/cli.py`.
+## 미구현
 
-### Worktree Allocation
-
-```
-Worktree A ← Agent A
-Worktree B ← Agent B
-Worktree C ← Agent C
-(Worktrees D+ not created)
-```
-
-Each worktree:
-- Isolated Git repository state
-- Independent filesystem
-- No cross-access between agents
-- ❌ **Not** cleaned up in parallel mode — the measurement phase that performs cleanup is
-  unreachable, so worktrees persist under `<repo>/.git/worktrees/` and must be removed manually:
-  ```bash
-  git worktree remove --force <path>
-  ```
-
-### Concurrent Execution
-
-```
-T=0s:   Launch Agent A (background)
-T+0.1s: Launch Agent B (background)
-T+0.2s: Launch Agent C (background)
-        All three execute concurrently
-T+~60s: Agent A completes (notification)
-T+~61s: Agent B completes (notification)
-T+~62s: Agent C completes (notification)
-        → Proceed to measurement phase
-```
-
-All agents start at nearly identical times; no artificial sequencing.
-
-**Important:** this launch sequence is executed by the **Claude assistant** following the
-`/change-drill` prompt, not by the harness. The harness creates worktrees and returns; it has no
-knowledge of, control over, or record of any agent. Concurrency is therefore an orchestration
-property of the prompt, not a guarantee the harness can enforce.
-
----
-
-## Architectural Guarantees
-
-### Isolation
-
-- ✅ **No Interference:** Each agent gets a separate worktree directory
-- ✅ **Independent State:** Each agent's code changes isolated in its worktree
-- ✅ **Clean Original:** Original repository never modified (detached checkouts)
-- ❌ **Verified Cleanup:** Not performed in parallel mode — see Worktree Allocation above
-
-Note: scoping an agent to its worktree relies on the agent honoring the path constraint given in
-its prompt. There is no filesystem-level sandbox preventing an agent from writing elsewhere.
-
-### Concurrency
-
-- ⚠️ **True Parallelism:** Depends on the assistant backgrounding each agent; not harness-enforced
-- ❌ **Independent Measurement:** Parallel measurement is unreachable from the CLI
-- ✅ **No Blocking:** No agent waits for another
-- ⚠️ **Notification-Based:** Completion notification is a property of the assistant's task runner
-
-### Evidence Collection
-
-- ❌ **Per-Agent Tracking:** `results/agent_<ID>/` is never written — the code path is unreachable
-- ❌ **Independent Verification:** Not reached in parallel mode. Even in single-agent mode, tests
-  are not verified independently of the build (`test_success` mirrors `build_success`)
-- ❌ **Combined Reporting:** `results/comparison/` is never written
-- ⚠️ **Full Preservation:** Evidence must currently be collected by invoking single-agent
-  `--phase measure` manually, once per worktree
-
----
-
-## Operational Constraints
-
-### Pre-Execution Checks
-
-> **Status: none of these are implemented.** The only validation performed is that the target path
-> exists and contains a `.git` entry (`Worktree.validate_repo()`). The checks below are the
-> intended policy and must currently be performed by the operator.
-
-Before launching N agents:
-1. Validate target repository is clean — ❌ not checked; a dirty working tree makes the base
-   commit ambiguous but does not stop execution
-2. Verify N ≤ 3 — ❌ not checked
-3. Ensure sufficient disk space (N worktrees + results) — ❌ not checked
-4. Confirm scenario is well-defined — ❌ not checked
-
-### During Execution
-
-1. All N agents must receive identical scenario
-2. Agents execute concurrently (not sequentially)
-3. Each agent has exclusive worktree
-4. No stopping or pausing agents mid-execution
-
-### Post-Execution
-
-> **Status: items 1–3 do not occur in parallel mode.**
-
-1. All worktrees cleaned up automatically — ❌ manual cleanup required
-2. Evidence preserved for each agent — ⚠️ requires manual per-worktree measure invocations
-3. Comparison report generated — ❌ code path unreachable
-4. Original repository verified unchanged — ✅ verifiable via `git status` in the target repo
-
----
-
-## Failure Handling
-
-> **Status: not implemented.** The section below describes intended behavior.
-> Today, `measure_all()` wraps all agents in a single `try` block and returns one error for the
-> whole run if any agent's measurement raises. There is no per-agent failure isolation and no
-> partial comparison report.
-
-### Single Agent Failure
-
-If 1 of 3 agents fails:
-- Continue with other agents' results
-- Record failure explicitly
-- Preserve evidence from successful agents
-- Generate partial comparison report
-
-**Example:**
-```
-Agent A: Completed (3 files, 35 lines)
-Agent B: Completed (3 files, 36 lines)
-Agent C: Failed (build error) → Evidence preserved
-Result: Report with A and B, notation of C failure
-```
-
-### Multiple Agent Failure
-
-If 2+ agents fail:
-- Preserve evidence from any successful agents
-- Record all failures explicitly
-- Do not stop the experiment
-- Generate report with available evidence
-
-### No Partial Success Hiding
-
-Never convert failed results to "passed". Always:
-- Record actual status (completed/failed)
-- Preserve error messages
-- Include in final report with explicit notation
-
----
-
-## Future Considerations
-
-### Exceeding 3 Agents
-
-If future requirements demand more than 3 concurrent agents:
-
-**Required Changes:**
-1. Redesign worktree management
-2. Assess Claude Code runtime capacity
-3. Verify resource consumption remains acceptable
-4. Document new constraints and guarantees
-5. Test isolation at new scale
-
-**Not Recommended Without Evidence**
-- No current requirement for 4+ agents
-- Architecture untested beyond 3
-- Requires deliberate design decisions
-
----
-
-## Policy Change Procedure
-
-To modify this policy:
-
-1. **Document Rationale:** Why is the change necessary?
-2. **Test Thoroughly:** Verify at new scale (if increasing)
-3. **Update All Documentation:** Reflect new limits everywhere
-4. **Version This Document:** Increment version number
-5. **Announce Change:** Notify team of new constraints
-
----
-
-## Appendix: Design Rationale
-
-### Why Not More Agents?
-
-**5 Agents (Example)**
-- Worktree management complexity increases quadratically
-- Concurrent verification load on target repository (if applicable)
-- Results harder to interpret (too much variance)
-- Diminishing return on evidence quality vs. resource cost
-
-**Why 3 Specifically?**
-- Small prime number (good for statistical sampling)
-- Tested and working (2 verified, 3 designed)
-- Provides diversity without excess
-- Reasonable resource consumption
-- Scalable in future if needed
-
-### Why Not 1?
-
-Single-agent mode (1 agent) still supported because:
-- Some experiments require sequential runs
-- Lower resource overhead
-- Simpler orchestration
-- Some scenarios may need repeated single runs
-
----
-
-## Summary
-
-| Aspect | Specification | Implemented |
-|--------|---|---|
-| Minimum agents | 1 | ✅ |
-| CLI default agents | 1 | ✅ |
-| Recommended parallel count | 3 | ❌ convention only |
-| Maximum agents | 3 | ❌ not enforced |
-| Execution | Concurrent (not sequential) | ⚠️ assistant-driven |
-| Isolation | Per-worktree | ✅ |
-| Original repo protection | Guaranteed | ✅ |
-| Failure handling | Explicit, non-hiding | ❌ |
-| Policy enforcement | Hard limit in CLI | ❌ **no validation exists** |
-
-**This policy states intent. Where the "Implemented" column shows ❌, the policy is currently
-maintained by operator discipline rather than by code.**
-
-## Gap Closure Backlog
-
-To bring the implementation in line with this policy:
-
-1. Add `1 <= --parallel <= 3` validation to `src/cli.py`
-2. Persist `ParallelDrill` state (worktree paths + base commit) between the setup and measure
-   processes so `measure_all()` becomes reachable
-3. Wrap per-agent measurement in individual `try` blocks for failure isolation
-4. Add a clean-working-tree precondition check
-5. Ensure worktree cleanup runs even when measurement is never invoked
+- `--parallel` 값 범위 검증 (3 초과 차단)
+- Agent별 실패 격리 — 하나가 실패하면 그대로 전파된다
+- 사전 점검 (working tree clean 여부, 빌드 명령 존재 여부)
+- 여러 시나리오 동시 실행 — `--parallel N`은 **하나의 시나리오**에 N개 Agent를 배정한다

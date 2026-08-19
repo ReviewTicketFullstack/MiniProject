@@ -1,189 +1,87 @@
-# System Architecture: Clean Code Change Lab
+# 시스템 설계
 
-> **Scope note:** This document describes the architecture **as currently implemented**.
-> Where a designed capability is not yet wired up, it is marked explicitly.
+## 실행 모델
 
-## Execution Model
+`/change-drill`은 하나의 프로그램이 아니라 **프롬프트 파일**
+([`.claude/commands/change-drill.md`](../.claude/commands/change-drill.md))이다.
+책임은 둘로 나뉜다.
 
-`/change-drill` is not a single program. It is a **prompt file**
-([`.claude/commands/change-drill.md`](../.claude/commands/change-drill.md)) that instructs the
-Claude assistant to invoke a Python harness in phases. Responsibility is split:
+| 담당                                            | 주체              |
+| ----------------------------------------------- | ----------------- |
+| 저장소 검증, Worktree 관리, 측정, 리포트 렌더링 | Python (`src/`)   |
+| Agent 호출, 단계 순서 제어, 단계 간 값 전달     | Claude 어시스턴트 |
 
-| Concern | Owner |
-|---|---|
-| Scenario selection, worktree lifecycle, measurement, verification, reporting | Python harness (`src/`) |
-| Coding Agent invocation, phase sequencing, passing values between phases | Claude assistant, driven by the prompt file |
+**Python 코드는 Agent를 호출하지 않는다.** `src/` 어디에도 Agent 호출은 없다.
 
-**The harness never invokes a Coding Agent.** There is no `Task`, subprocess, or API call to any
-agent anywhere in `src/`. This is the single most important thing to understand about the
-architecture: the harness measures a worktree, it does not orchestrate the actor that changes it.
+## 모듈 구성
 
-## Single-Agent Flow (fully implemented)
+| 파일                   | 역할                                                    |
+| ---------------------- | ------------------------------------------------------- |
+| `cli.py`               | 진입점. 모드 분기(예측 / 예측 리포트 / 단일 / 병렬)     |
+| `prediction.py`        | `AgentPrediction`, `PredictionComparison`, 예측 집계    |
+| `prediction_report.py` | **예측 터미널 리포트 렌더링 (형식의 단일 진실 공급원)** |
+| `worktree.py`          | Git worktree 생성·정리                                  |
+| `measurement.py`       | `git diff` 파싱, 빌드 검증                              |
+| `analysis.py`          | Agent 간 비교 분석                                      |
+| `harness.py`           | 단일 Agent 실험 조율                                    |
+| `parallel.py`          | 병렬 Agent 실험 조율                                    |
+| `report.py`            | 구현 모드 결과 저장 (JSON/MD/diff)                      |
 
-```mermaid
-flowchart TD
-    A[Developer runs /change-drill] --> B[Assistant reads command prompt]
-    B --> C["harness --phase setup"]
-    C --> D[Worktree created at<br/>.git/worktrees/drill-ID-PID]
-    D --> E[Assistant spawns Coding Agent<br/>scoped to worktree path]
-    E --> F[Agent reports completion]
-    F --> G["harness --phase measure"]
-    G --> H[git diff base_commit]
-    H --> I[parse_diff → ChangeCost]
-    G --> J[Run single detected command]
-    J --> K[VerificationResult]
-    I --> L[ExperimentEvidence]
-    K --> L
-    L --> M["results/<id>_<ts>.json/.md/.diff"]
-    M --> N[Worktree removed]
-```
-
-### Phase boundaries
-
-The two harness invocations are **separate OS processes with no shared state**. The assistant must
-carry `worktree_path` and `base_commit` from the setup output into the measure invocation. Nothing
-is persisted to disk between phases.
-
-`--phase full` exists but does **not** pause for an agent — it creates the worktree and measures on
-the next statement, always yielding an empty diff. It is not usable for real drills.
-
-## Parallel Agent Model (partially implemented)
+## 예측 모드 (읽기 전용)
 
 ```mermaid
 flowchart TD
-    A[Developer] --> B[Change Drill prompt]
-    B --> C["ParallelDrill.setup_worktrees()"]
-    C --> D[Worktree A]
-    C --> E[Worktree B]
-    C --> F[Worktree C]
-    D --> G[Coding Agent A]
-    E --> H[Coding Agent B]
-    F --> I[Coding Agent C]
-    G -.-> M
-    H -.-> M
-    I -.-> M
-    M["measure_all() — NOT REACHABLE FROM CLI"]
-    M -.-> N["Comparison report — NOT REACHABLE"]
-
-    style M stroke-dasharray: 5 5
-    style N stroke-dasharray: 5 5
+    A[사용자 자연어 요청] --> B[임시 시나리오 생성]
+    B --> C["cli --predict<br/>저장소 검증"]
+    C --> D[Agent A 분석]
+    C --> E[Agent B 분석]
+    D --> F["results/agent_A/prediction_ID.json"]
+    E --> G["results/agent_B/prediction_ID.json"]
+    F --> H["cli --predict-report"]
+    G --> H
+    H --> I[터미널 리포트 출력]
 ```
 
-Dashed nodes are implemented in `src/parallel.py` and `src/analysis.py` but **cannot be reached
-through the CLI**. `--phase measure --parallel N` constructs a fresh `ParallelDrill` whose worktree
-map is empty, so it always terminates with:
+- `--predict`: 저장소 검증 + 실행 상태 저장. Worktree 없음, 리포트 없음.
+- `--predict-report`: 저장된 JSON을 읽어 집계·출력. Agent 실행 없음, 저장소 접근 없음.
+  독립 실행 가능하며, 증거가 없거나 손상되면 종료 코드 1을 반환한다.
 
-```
-Error: Harness not properly initialized. Call setup_worktrees() first.
-```
+두 단계를 분리한 이유: **리포트 형식이 Claude의 비결정적 출력에 좌우되지 않게 하기 위함.**
 
-Consequently, in parallel mode: no measurement runs, no comparison report is produced, and
-**worktrees are not cleaned up**.
+## 구현 모드
 
-### Parallel status summary
-
-| Capability | Status |
-|---|---|
-| Create N isolated worktrees | ✅ Implemented |
-| Concurrent agent execution | ⚠️ Assistant-driven, outside the harness |
-| Per-agent measurement | ❌ Unreachable from CLI |
-| Cross-agent comparison (`analysis.py`) | ❌ Unreachable from CLI |
-| Automatic worktree cleanup | ❌ Manual cleanup required |
-
-## Agent Execution Constraints
-
-### Parallel Agent Limits
-
-| Configuration | Value | Enforced? |
-|---|---|---|
-| Minimum agents | 1 | — |
-| CLI default | 1 | ✅ `--parallel` defaults to `1` |
-| Recommended for parallel mode | 3 | ❌ Convention only |
-| Maximum agents | 3 | ❌ **Not enforced** — no range validation exists |
-| Execution mode | Concurrent | ⚠️ Property of the prompt, not a harness guarantee |
-
-`--parallel 4` and above are accepted and will create that many worktrees.
-
-### Isolation Guarantees
-
-- **Per-Agent Worktree** ✅ — each agent gets its own `git worktree add --detach` checkout
-- **No Cross-Access** ✅ — worktrees are separate directories; scoping relies on the agent honoring
-  the path constraint in its prompt
-- **Original Repository** ✅ — never modified; worktrees are detached checkouts. Note that worktree
-  metadata is written under the target repo's `.git/worktrees/`, which `git status` does not show
-- **Independent Verification** ⚠️ — true for the single-agent path only; unreachable in parallel
-
-### Scaling Notes
-
-- **Verified**: single-agent path, end to end
-- **Design capacity**: up to 3 agents concurrently
-- **Beyond 3**: not supported (and not currently blocked by code)
-- **Rationale**: balances concurrent evidence collection against system resource constraints
-
-## Measurement Architecture
-
-```
-git diff <base_commit>  →  parse_diff()  →  ChangeCost
+```mermaid
+flowchart TD
+    A["cli --phase setup"] --> B[Worktree 생성]
+    B --> C[Agent가 Worktree 안에서 구현]
+    C --> D["cli --phase measure"]
+    D --> E["git diff base_commit"]
+    E --> F[ChangeCost]
+    D --> G[빌드 명령 실행]
+    G --> H[VerificationResult]
+    F --> I[ExperimentEvidence]
+    H --> I
+    I --> J["results/*.json / .md / .diff"]
 ```
 
-Known structural limits of this pipeline:
+setup과 measure는 **상태를 공유하지 않는 별개 프로세스**다.
+어시스턴트가 `worktree_path`와 `base_commit`을 전달해야 한다.
+병렬 모드의 measure는 `discover_worktrees()`로 worktree를 다시 찾아 동작한다.
 
-- `git diff <commit>` **excludes untracked files**. Files an agent newly creates are invisible to
-  measurement unless staged.
-- Per-file `lines_added` / `lines_deleted` are always `0`; only repository-wide totals are counted.
-- `FileDiff.status` is always `"M"`; renames, additions, and deletions are not distinguished.
-- `FileDiff.is_test_file` is never assigned, so the `(test)` marker in Markdown reports never
-  renders. The aggregate `test_files_changed` count is computed correctly and separately.
-- `unrelated_files_modified` is hardcoded to `0`; no relatedness analysis exists.
+## 측정 파이프라인의 한계
 
-## Verification Architecture
+- `git diff <commit>`은 **untracked 파일을 제외한다.** Agent가 새로 만든 파일은 stage하지 않으면 안 보인다.
+- 파일별 `lines_added` / `lines_deleted`는 항상 `0`. 저장소 전체 합계만 집계된다.
+- `FileDiff.status`는 항상 `"M"`. 추가·삭제·이름변경을 구분하지 않는다.
+- `unrelated_files_modified`는 `0` 고정. 연관성 분석은 없다.
 
-**One command is detected and run — not two.**
+## 검증의 한계
 
-`detect_build_command()` inspects the **original repository** (not the worktree) in this order:
-
-| Marker | Command |
-|---|---|
-| `Makefile` | `make` |
-| `package.json` | `npm test` |
-| `pytest.ini` / `setup.py` / `requirements.txt` | `python -m pytest` |
-| *(none)* | `make` (fallback) |
-
-That single command is then executed inside the worktree. Test success is **derived, not measured**:
+빌드 명령 **하나만** 탐지해서 실행한다 (`Makefile` → `make`, `package.json` → `npm test`,
+`pytest.ini`/`setup.py`/`requirements.txt` → `python -m pytest`, 없으면 `make`).
 
 ```python
 build_success = result.returncode == 0
 if build_success:
-    test_success = True     # mirrored from build, not independently verified
+    test_success = True   # 빌드 결과를 복사할 뿐, 별도 검증 아님
 ```
-
-`test_command` is always `""`. A report showing `Tests: ✓` conveys no information beyond
-`Build: ✓`. Completion is therefore `completed = build_success`, in effect.
-
-There is no exception handling around the 300-second subprocess timeout; a timeout or missing
-binary propagates to the caller's generic handler.
-
-## Reporting
-
-| Artifact | Path | Notes |
-|---|---|---|
-| Structured evidence | `results/<id>_<ts>.json` | Diff excluded |
-| Human report | `results/<id>_<ts>.md` | Diff truncated to 1000 chars, build output to 500 |
-| Raw diff | `results/<id>_<ts>.diff` | Full |
-
-Parallel mode would write to `results/agent_<ID>/` and `results/comparison/`; neither directory
-exists, consistent with that path never having executed.
-
-## Not Implemented
-
-The following appear in product documentation but have no implementation:
-
-- Sub-agent decomposition (Scenario / Verification / Measurement / Analysis Agents) — these are
-  plain Python functions, not agents
-- Free-text scenario input — only catalog IDs are accepted
-- Clean-working-tree precondition check
-- Cross-run or cross-scenario comparison
-- Multi-scenario parallel execution
-- Hook / scheduled automation
-- Layer-and-module propagation analysis
-- Any runtime data-flow visualization
