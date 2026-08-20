@@ -12,16 +12,13 @@ deliberately kept out of this view - they stay in the saved JSON evidence.
 """
 
 from typing import Callable, List, Sequence
-
 from .prediction import PredictionComparison, AgentPrediction
-
 
 WIDTH = 70
 METRIC_COL = 22
 AGENT_COL = 18
 LABEL_WIDTH = 15
 BAR_WIDTH = 32
-
 
 def _rule(char: str = "─") -> str:
     return char * WIDTH
@@ -82,10 +79,10 @@ def _spread(values: Sequence[float]) -> tuple:
 
 def _agreement_band(pct: float) -> str:
     if pct <= 10:
-        return "close"
+        return "근접"
     if pct <= 25:
-        return "moderate"
-    return "wide"
+        return "중간"
+    return "넓음"
 
 
 def _total_loc(pred: AgentPrediction) -> int:
@@ -104,22 +101,22 @@ def format_prediction_result(
 
     # ── Header ────────────────────────────────────────────────────────────
     lines.append(_rule("━"))
-    lines.append("  CODESTRESS · CHANGE DRILL PREDICTION")
-    lines.append("  ESTIMATES ONLY · READ-ONLY ANALYSIS")
+    lines.append("  코드스트레스 · 변경 드릴 예측")
+    lines.append("  추정치 전용 · 읽기 전용 분석")
     lines.append(_rule("━"))
     lines.append("")
-    lines.append("  SCENARIO")
+    lines.append("  시나리오")
     lines.append(f"  {scenario_name}")
     lines.append("")
 
     # ── Key metrics table ─────────────────────────────────────────────────
-    lines.append("  KEY METRICS")
+    lines.append("  주요 지표")
     lines.append(_table_border("┌", "┬", "┐", columns))
-    lines.append(_table_row("Metric", [f"Agent {a}" for a in agent_ids]))
+    lines.append(_table_row("지표", [f"에이전트 {a}" for a in agent_ids]))
     lines.append(_table_border("├", "┼", "┤", columns))
-    lines.append(_table_row("Tokens", [f"~{p.estimated_tokens:,}" for p in preds]))
+    lines.append(_table_row("토큰", [f"~{p.estimated_tokens:,}" for p in preds]))
     lines.append(
-        _table_row("Files changed", [f"{p.estimated_files_changed}" for p in preds])
+        _table_row("변경 파일", [f"{p.estimated_files_changed}" for p in preds])
     )
     lines.append(
         _table_row(
@@ -131,17 +128,17 @@ def format_prediction_result(
         )
     )
     lines.append(
-        _table_row("Complexity", [p.complexity_level.upper() for p in preds])
+        _table_row("복잡도", [p.complexity_level.upper() for p in preds])
     )
     lines.append(_table_border("└", "┴", "┘", columns))
     lines.append("")
 
     # ── Estimate comparison ───────────────────────────────────────────────
-    lines.append("  ESTIMATE COMPARISON")
+    lines.append("  추정치 비교")
     lines.append("")
     lines.extend(
         _chart(
-            "Tokens",
+            "토큰",
             agent_ids,
             [p.estimated_tokens for p in preds],
             lambda v: f"~{int(v):,}",
@@ -149,7 +146,7 @@ def format_prediction_result(
     )
     lines.extend(
         _chart(
-            "Files",
+            "파일",
             agent_ids,
             [p.estimated_files_changed for p in preds],
             lambda v: f"{int(v)}",
@@ -157,7 +154,7 @@ def format_prediction_result(
     )
     lines.extend(
         _chart(
-            "LOC TOUCHED",
+            "터치된 LOC",
             agent_ids,
             [_total_loc(p) for p in preds],
             lambda v: f"{int(v)}",
@@ -174,46 +171,46 @@ def format_prediction_result(
 
         levels = {p.complexity_level.strip().lower() for p in preds}
         complexity_note = (
-            f"agree ({levels.pop()})" if len(levels) == 1
-            else "differ (" + ", ".join(sorted(levels)) + ")"
+            f"동의 ({levels.pop()})" if len(levels) == 1
+            else "불일치 (" + ", ".join(sorted(levels)) + ")"
         )
 
         consensus = [
-            ("Scope", _agreement_band(file_pct)),
-            ("Complexity", complexity_note),
-            ("Tokens", _agreement_band(token_pct)),
+            ("범위", _agreement_band(file_pct)),
+            ("복잡도", complexity_note),
+            ("토큰", _agreement_band(token_pct)),
             ("LOC", _agreement_band(loc_pct)),
         ]
         difference = [
-            ("Tokens", f"~{int(token_diff):,} ({token_pct:.0f}%)"),
-            ("Files", f"{int(file_diff)} ({file_pct:.0f}%)"),
+            ("토큰", f"~{int(token_diff):,} ({token_pct:.0f}%)"),
+            ("파일", f"{int(file_diff)} ({file_pct:.0f}%)"),
             ("LOC", f"{int(loc_diff)} ({loc_pct:.0f}%)"),
         ]
     else:
         consensus = [
-            ("Scope", "n/a (single agent)"),
-            ("Complexity", "n/a (single agent)"),
-            ("Tokens", "n/a (single agent)"),
-            ("LOC", "n/a (single agent)"),
+            ("범위", "해당 없음 (단일 에이전트)"),
+            ("복잡도", "해당 없음 (단일 에이전트)"),
+            ("토큰", "해당 없음 (단일 에이전트)"),
+            ("LOC", "해당 없음 (단일 에이전트)"),
         ]
         difference = [
-            ("Tokens", "n/a (single agent)"),
-            ("Files", "n/a (single agent)"),
-            ("LOC", "n/a (single agent)"),
+            ("토큰", "해당 없음 (단일 에이전트)"),
+            ("파일", "해당 없음 (단일 에이전트)"),
+            ("LOC", "해당 없음 (단일 에이전트)"),
         ]
 
-    lines.append("  CONSENSUS")
+    lines.append("  합의")
     lines.extend(_note(label, value) for label, value in consensus)
     lines.append("")
 
-    lines.append("  DIFFERENCE")
+    lines.append("  차이")
     lines.extend(_note(label, value) for label, value in difference)
     lines.append("")
 
     # ── Footer ────────────────────────────────────────────────────────────
     lines.append(_rule("━"))
-    lines.append("  All values are estimates from static code analysis.")
-    lines.append("  No source files were modified.")
+    lines.append("  모든 값은 정적 코드 분석의 추정치입니다.")
+    lines.append("  원본 파일은 수정되지 않았습니다.")
     lines.append(_rule("━"))
     lines.append("")
 

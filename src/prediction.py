@@ -1,7 +1,4 @@
-"""Prediction-only mode for change drill: analyze without implementing.
-
-Agents analyze the codebase and predict implementation approach, scope, and cost
-without modifying any files or creating worktrees.
+"""코드베이스를 분석하고 구현 방식, 범위, 비용을 예측
 """
 
 import json
@@ -58,7 +55,7 @@ class AgentPrediction:
 
 @dataclass
 class PredictionComparison:
-    """Comparison of predictions from multiple agents."""
+    """여러 에이전트의 예측 비교."""
     scenario_id: str
     scenario_name: str
     num_agents: int
@@ -72,7 +69,7 @@ class PredictionComparison:
 
 
 class PredictionOrchestrator:
-    """Orchestrates read-only prediction of changes across multiple agents."""
+    """여러 에이전트에 걸친 변경 사항을 읽기 전용으로 예측하도록 조율"""
 
     def __init__(
         self,
@@ -83,7 +80,7 @@ class PredictionOrchestrator:
         num_agents: int = 2,
         results_dir: str = "results",
     ):
-        """Initialize prediction orchestrator (no worktrees needed)."""
+        """예측 오케스트레이터를 초기화합니다(워크트리 불필요)."""
         self.repo_path = Path(repo_path).resolve()
         self.scenario_id = scenario_id
         self.scenario_name = scenario_name
@@ -93,7 +90,7 @@ class PredictionOrchestrator:
         self.predictions: Dict[str, AgentPrediction] = {}
 
     def validate_repo(self) -> bool:
-        """Verify the repository exists and is readable."""
+        """저장소가 존재하는지, 읽을 수 있는지 확인."""
         if not self.repo_path.exists():
             print(f"✗ Repository not found: {self.repo_path}")
             return False
@@ -106,12 +103,12 @@ class PredictionOrchestrator:
         return True
 
     def record_prediction(self, agent_id: str, prediction: AgentPrediction) -> None:
-        """Record an agent's prediction."""
+        """에이전트의 예측 기록"""
         self.predictions[agent_id] = prediction
         print(f"✓ Agent {agent_id} prediction recorded")
 
     def save_predictions(self) -> Dict[str, Path]:
-        """Save prediction evidence to disk."""
+        """예측 근거 디스크 저장"""
         saved_files = {}
 
         from datetime import datetime
@@ -133,7 +130,7 @@ class PredictionOrchestrator:
         return saved_files
 
     def analyze_predictions(self) -> PredictionComparison:
-        """Build comparison from multiple agent predictions."""
+        """여러 에이전트의 예측을 바탕으로 비교를 구축"""
         if len(self.predictions) < 2:
             # Single agent prediction
             single_pred = list(self.predictions.values())[0]
@@ -185,7 +182,7 @@ class PredictionOrchestrator:
 
     @staticmethod
     def _find_common_themes(approaches: List[str]) -> List[str]:
-        """Extract common themes from agent approaches."""
+        """공통된 주제를 추출 from agents approaches"""
         if not approaches:
             return []
 
