@@ -1,0 +1,24 @@
+{
+  "agent_id": "A",
+  "scenario_name": "주문 취소 기능 구현",
+  "timestamp": "2026-08-20T19:50:00+09:00",
+  "estimated_tokens": 48000,
+  "estimated_files_changed": 6,
+  "estimated_lines_added": 260,
+  "estimated_lines_deleted": 45,
+  "complexity_level": "medium",
+  "implementation_approach": "이 저장소에는 주문/결제 도메인이 전혀 없다(codeStress는 Git worktree 기반 변경 드릴 측정 하네스다). 따라서 '주문 취소'에 해당하는 상태 전이 취소 기능을 이 코드베이스의 실제 도메인인 '실험 실행(experiment run)'에 매핑하여 예측한다: setup 이후 measure 이전에 진행 중인 드릴을 취소(cancel/abort)하는 기능. 구현 경로는 (1) measurement.py의 ExperimentEvidence에 status/cancelled 필드와 CancelReason을 추가해 도메인 상태를 명시화, (2) worktree.py에 cancel()/force_remove() 정리 경로 추가, (3) harness.py에 cancel() 메서드를 추가해 setup_complete -> cancelled 전이를 단일 지점에서 관리, (4) cli.py에 --phase cancel 서브커맨드와 인자 검증 추가, (5) parallel.py에 다중 워크트리 일괄 취소 반영, (6) report.py/terminal_report.py에 취소 상태 렌더링 추가. 실제 주문 도메인을 신규 도입한다고 가정하면 src/domain/order.py(Order, OrderStatus Enum, 전이표), src/services/order_service.py, src/repositories/order_repository.py, cli.py 엔드포인트의 4~5파일 신규 생성이 필요하며, 현재는 참고할 도메인 계층 패턴이 없어 아키텍처를 처음부터 정해야 한다.",
+  "likely_files": [
+    "/Users/byurin/codeStress/src/harness.py",
+    "/Users/byurin/codeStress/src/measurement.py",
+    "/Users/byurin/codeStress/src/worktree.py",
+    "/Users/byurin/codeStress/src/cli.py",
+    "/Users/byurin/codeStress/src/parallel.py",
+    "/Users/byurin/codeStress/src/report.py",
+    "/Users/byurin/codeStress/src/terminal_report.py"
+  ],
+  "coupling_observations": "상태(state) 개념이 타입으로 존재하지 않고 문자열 리터럴로 흩어져 있다. parallel.py에서만 \"status\": \"setup_complete\"/\"worktree_error\"/\"error\"/\"success\"가 5곳(88, 105, 114, 180, 295, 328행 부근)에 하드코딩되어 있고 harness.py의 setup()/measure_and_report()도 동일한 문자열을 독립적으로 반환한다. Enum이나 상태 전이표가 없으므로 '취소' 상태를 추가하면 이 리터럴을 사용하는 모든 분기와 리포트 렌더러를 grep으로 추적해 수동 동기화해야 한다. 또한 harness는 프로세스 간 상태를 영속화하지 않고 CLI가 base_commit/worktree_path를 두 단계에 걸쳐 전달하는 구조(README, harness.py docstring 명시)라, 취소는 '진행 중 상태'를 어딘가 저장해야 하므로 상태 영속화 계층이 새로 필요하다 — 이것이 이 변경의 가장 큰 결합 비용이다. cli.py(557행)가 인자 파싱, 근거 파일 로딩(load_agent_predictions), 폴링 루프, 오케스트레이션을 모두 겸해 CLI와 도메인 로직이 강하게 결합되어 있다.",
+  "duplication_observations": "harness.py의 단일 에이전트 setup/measure 흐름과 parallel.py의 다중 에이전트 setup_all/measure_all이 워크트리 생성, base_commit 획득, diff 파싱, 검증 실행, 결과 저장이라는 동일 시퀀스를 각각 별도로 구현한 명백한 중복이다(harness.setup vs parallel 88~114행, harness.measure_and_report vs parallel 180~231행). 상태 변경 기능이 두 곳에 병렬 존재하므로 '취소'도 두 번 구현해야 할 가능성이 높고, 한쪽만 고치면 동작이 갈리는 전형적 산탄총 수술(shotgun surgery) 위험이 있다. 리포트 계층도 report.py / terminal_report.py / prediction_report.py 세 갈래로 나뉘어 유사한 포맷팅이 반복되어, 새 상태 표시를 세 곳에 추가해야 한다. 또한 measurement.py의 test_success가 build_success의 복사본이라는 README의 기술도 검증 로직 중복/미분리의 사례다.",
+  "responsibility_observations": "계층은 모듈 단위로는 나쁘지 않게 나뉘어 있다: worktree.py(인프라/Git), measurement.py(도메인 데이터 + 파싱), harness.py(오케스트레이션), report*.py(표현), cli.py(진입점). 다만 (a) 도메인 서비스 계층과 저장소(repository) 계층이 부재하다 — 상태 영속화가 없고 results 디렉터리에 JSON을 직접 쓰는 방식이라 저장소 추상화가 없다. (b) cli.py가 557행으로 가장 비대하며 AgentPrediction 역직렬화/검증 책임까지 떠안아 표현 계층이 도메인 검증을 수행한다. (c) measurement.py는 데이터클래스와 프로세스 실행(run_verification)을 한 파일에 섞어 순수 모델과 부수효과가 분리되어 있지 않다. (d) 상태 전이 규칙을 소유하는 주체가 없어 '누가 취소를 허용하는지' 판단할 자연스러운 위치가 현재 존재하지 않는다.",
+  "changeability_observations": "전체 2597행의 소규모 코드베이스이고 모듈 경계가 명확해 물리적 변경 난도 자체는 낮다(medium 상한). 변경을 어렵게 만드는 요인은 세 가지다: (1) 상태를 표현하는 1급 타입 부재 — Enum/전이표 도입이 사실상 선행 리팩터링이 된다, (2) harness와 parallel의 흐름 중복 — 취소 로직을 두 번 쓰거나 먼저 공통 추출을 해야 한다, (3) 프로세스 간 상태 비영속 — 취소는 본질적으로 '진행 중 엔티티'를 전제하는데 그 엔티티가 디스크에 없다. 테스트 디렉터리가 보이지 않아 회귀 안전망도 부족하다(README 스스로 검증이 build/test 미분리라고 명시). 권장 순서는 OperationStatus Enum + 전이 검증 함수를 measurement.py 또는 신규 src/state.py에 도입 → harness/parallel 공통 흐름 추출 → cancel 경로 추가다. 진짜 주문 도메인을 신규 도입하는 경우라면 기존 코드와 결합이 없어 추가는 쉬우나(그린필드), 참조할 도메인 패턴이 없어 설계 결정 비용이 구현 비용을 초과한다."
+}

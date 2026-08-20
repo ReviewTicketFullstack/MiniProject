@@ -3,9 +3,13 @@
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 from .harness import Harness
+
+# Polling interval (seconds) while waiting for agent evidence to appear.
+EVIDENCE_POLL_INTERVAL = 2.0
 
 
 def load_agent_predictions(results_dir: Path, scenario_id: str, scenario_name: str):
@@ -51,10 +55,69 @@ def load_agent_predictions(results_dir: Path, scenario_id: str, scenario_name: s
     return predictions, errors
 
 
-def run_predict_report(results_dir: Path, scenario_id: str, scenario_name: str) -> int:
+def count_agent_evidence(results_dir: Path, scenario_id: str) -> int:
+    """이 시나리오에 대해 현재 존재하는 에이전트 근거 파일 수."""
+    if not results_dir.exists():
+        return 0
+
+    return sum(
+        1
+        for agent_dir in results_dir.glob("agent_*")
+        if (agent_dir / f"prediction_{scenario_id}.json").exists()
+    )
+
+
+def wait_for_agent_evidence(
+    results_dir: Path,
+    scenario_id: str,
+    expect_agents: int,
+    timeout: float,
+) -> int:
+    """에이전트가 근거 JSON을 다 쓸 때까지 대기.
+
+    Blocks until `expect_agents` evidence files exist or `timeout` seconds pass,
+    and returns how many were found. Lets the report command be launched right
+    after the agents instead of as a separate step a caller can forget.
+    """
+    deadline = time.monotonic() + timeout
+    found = count_agent_evidence(results_dir, scenario_id)
+
+    if found < expect_agents:
+        print(
+            f"Waiting for agent evidence: {found}/{expect_agents} "
+            f"(timeout {int(timeout)}s)",
+            file=sys.stderr,
+        )
+
+    while found < expect_agents and time.monotonic() < deadline:
+        time.sleep(EVIDENCE_POLL_INTERVAL)
+        found = count_agent_evidence(results_dir, scenario_id)
+
+    return found
+
+
+def run_predict_report(
+    results_dir: Path,
+    scenario_id: str,
+    scenario_name: str,
+    expect_agents: int = 0,
+    wait_timeout: float = 0.0,
+) -> int:
     """예측 보고서 렌더링"""
     from .prediction import PredictionOrchestrator
     from .prediction_report import print_prediction_result
+
+    if expect_agents > 0 and wait_timeout > 0:
+        found = wait_for_agent_evidence(
+            results_dir, scenario_id, expect_agents, wait_timeout
+        )
+        if found < expect_agents:
+            print(
+                f"Error: timed out waiting for agent evidence "
+                f"({found}/{expect_agents} files under {results_dir})",
+                file=sys.stderr,
+            )
+            return 1
 
     if not results_dir.exists():
         print(f"Error: results directory not found: {results_dir}", file=sys.stderr)
@@ -188,6 +251,26 @@ def main():
         default=None,
         help="Directory to store results (default: results/ in codeStress repo)",
     )
+    parser.add_argument(
+        "--wait",
+        action="store_true",
+        help="With --predict-report: block until every agent has written its "
+             "prediction JSON, then render the report",
+    )
+    parser.add_argument(
+        "--expect-agents",
+        type=int,
+        default=None,
+        help="Number of agent evidence files to wait for "
+             "(used with --predict-report --wait; defaults to --parallel)",
+    )
+    parser.add_argument(
+        "--wait-timeout",
+        type=float,
+        default=600.0,
+        help="Seconds to wait for agent evidence before giving up "
+             "(used with --predict-report --wait; default: 600)",
+    )
 
     args = parser.parse_args()
 
@@ -206,10 +289,14 @@ def main():
                 )
                 return 1
 
+            expect_agents = args.expect_agents if args.expect_agents is not None else args.parallel
+
             return run_predict_report(
                 results_dir=Path(results_dir),
                 scenario_id=args.scenario_id,
                 scenario_name=args.scenario_name or args.scenario_id,
+                expect_agents=expect_agents if args.wait else 0,
+                wait_timeout=args.wait_timeout if args.wait else 0.0,
             )
 
         # Scenarios come from natural-language input only; there is no catalog.
@@ -272,13 +359,16 @@ def main():
             print(f"State saved to: {state_file}")
             print("Awaiting agent predictions...")
             print("")
-            print("When both agents have written their evidence, render the report:")
+            print("REQUIRED NEXT STEP - launch the agents, then run:")
             print(
-                f"  python3 -m src.cli --predict-report"
+                f"  python3 -m src.cli --predict-report --wait"
                 f" --results-dir {results_dir}"
                 f" --scenario-id {scenario['id']}"
                 f" --scenario-name \"{scenario['name']}\""
+                f" --expect-agents {args.parallel}"
             )
+            print("")
+            print("It blocks until every agent's JSON exists, then prints the report.")
             print("")
             return 0
 

@@ -39,7 +39,6 @@ def format_terminal_result(comparison: ComparisonResult, scenario_name: str) -> 
         metrics = comparison.agents[agent_id]
 
         lines.append(f"    Agent {agent_id}")
-        lines.append(f"    Agent {agent_id}")
         lines.append(f"    Estimated tokens    ~{metrics.estimated_tokens:,}")
         lines.append(f"    Estimated files        {metrics.files_changed}")
         lines.append(

@@ -13,10 +13,9 @@ user request
   → generate temporary scenario
   → validate repository        (--predict)
   → run exactly 2 read-only prediction agents
-  → wait until both prediction JSON files exist
   → exit the Claude prediction phase
-  → run the Python CLI         (--predict-report)
-  → the CLI renders the final terminal report
+  → run the Python CLI         (--predict-report --wait)
+  → paste the CLI output verbatim into the reply
   → verify git status
 ```
 
@@ -89,24 +88,35 @@ Required JSON fields (the evidence schema — unchanged):
 }
 ```
 
-Wait until both files exist, then end the prediction phase. Do not comment on, compare,
-or summarise the predictions.
+End the prediction phase once the agents return. Do not comment on, compare, or
+summarise the predictions, and do not poll for the files yourself — step 5 waits.
 
-## 5. Render the report
+## 5. Render the report — mandatory, never skip
 
 ```bash
 python3 -m src.cli \
-  --predict-report \
+  --predict-report --wait \
   --results-dir <results-dir> \
   --scenario-id <scenario-id> \
-  --scenario-name "<scenario name>"
+  --scenario-name "<scenario name>" \
+  --expect-agents 2
 ```
 
-This reads the saved JSON, aggregates it, and prints the report to stdout. It runs no
-agents, creates no worktrees, and touches no repository. A non-zero exit code means the
-evidence is missing or malformed — report the CLI's error rather than filling the gap.
+`--wait` blocks until all `--expect-agents` evidence files exist (`--wait-timeout`,
+default 600s), then reads the saved JSON, aggregates it, and prints the full report:
+header, KEY METRICS table, ESTIMATE COMPARISON charts, CONSENSUS, DIFFERENCE. It runs
+no agents, creates no worktrees, and touches no repository.
 
-Show the CLI output as-is.
+A run is not complete until this command has printed its report. A non-zero exit code
+means the evidence is missing, malformed, or never arrived — report the CLI's error
+rather than filling the gap.
+
+**Paste the CLI stdout into the reply, verbatim, inside a fenced code block.** The
+command's output is not shown to the user by the terminal — only what Claude writes in
+its reply reaches them, so a run whose report is not pasted is a failed run. Copy every
+line from the top rule through the bottom rule: header, KEY METRICS table, ESTIMATE
+COMPARISON charts, CONSENSUS, DIFFERENCE, footer. No summarising, no excerpting, no
+reformatting, and never replace the report with a description of it.
 
 ## 6. Safety check
 
@@ -122,6 +132,7 @@ Claude must **not**:
 
 - write the prediction comparison itself, in any form;
 - design, restate, reformat, or "improve" the terminal report;
+- summarise the report instead of pasting it, or omit any of its sections;
 - add commentary, recommendations, or a summary alongside the CLI output;
 - modify `src/cli.py` or `src/prediction_report.py` during a prediction run;
 - create worktrees, implement the change, run builds or tests, or modify the target repo.
