@@ -1,0 +1,330 @@
+"""Parallel change drill orchestration for multiple agents.
+
+병렬 워크플로우: setup_worktrees() → N개 독립 worktree 생성 (측정은 CLI에서 도달 불가).
+상태 비영속: setup과 measure 프로세스 분리, 중간 상태 미저장. measure_all()는 존재하나 unreachable.
+분석 통합: 가능한 코드는 있으나 병렬 측정 단계가 작동하지 않아 analysis.py와 연결 불가.
+"""
+
+import json
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, List, Any, Optional
+
+from .worktree import Worktree, WorktreeError
+from .measurement import parse_diff, run_verification, ExperimentEvidence
+from .report import save_experiment_results
+from .analysis import (
+    ExperimentAnalyzer,
+    AgentMetrics,
+    ComparisonReportGenerator,
+)
+
+# git worktree 병렬수행
+class ParallelDrill:
+
+    def __init__(
+        self,
+        repo_path: str,
+        scenario_id: str,
+        scenario_name: str,
+        scenario_prompt: str,
+        num_agents: int = 2, 
+        results_dir: str = "results",
+        base_commit: Optional[str] = None,
+    ):
+        """""
+        Args:
+            repo_path: Target repository path
+            scenario_id: Scenario identifier
+            scenario_name: Scenario name
+            scenario_prompt: Full scenario prompt for agents
+            num_agents: Number of concurrent agents (default 2)
+            results_dir: Results directory
+            base_commit: Optional base commit for measurement phase
+        """
+        self.repo_path = Path(repo_path).resolve()
+        self.scenario_id = scenario_id
+        self.scenario_name = scenario_name
+        self.scenario_prompt = scenario_prompt
+        self.num_agents = num_agents
+        self.results_dir = Path(results_dir).resolve()
+        self.base_commit = base_commit
+
+        self.worktrees: Dict[str, Worktree] = {}
+        self.agent_results: Dict[str, Dict[str, Any]] = {}
+
+    def setup_worktrees(self) -> Dict[str, Any]:
+        """
+        agent 수만큼 git worktree 생성. 각 agent 의 작업정보반환
+        """
+        try:
+            print(f"Setting up parallel drill: {self.scenario_id}")
+            print(f"Repository: {self.repo_path}")
+            print(f"Agents: {self.num_agents}")
+            print("")
+
+            # Create first worktree to establish base commit
+            agent_0 = Worktree(str(self.repo_path), f"{self.scenario_id}-0")
+            agent_0.validate_repo()
+            self.base_commit = agent_0.get_base_commit()
+
+            print(f"Base commit: {self.base_commit[:8]}")
+            print(f"Creating {self.num_agents} isolated worktrees...")
+            print("")
+
+            for i in range(self.num_agents):
+                agent_id = chr(65 + i)  # A, B, C, ...
+                worktree = Worktree(str(self.repo_path), f"{self.scenario_id}-{i}")
+                worktree.create()
+                self.worktrees[agent_id] = worktree
+                print(f"✓ Agent {agent_id}: {worktree.worktree_path}")
+
+            print("")
+            print("All worktrees ready. Awaiting agents...")
+            print("")
+
+            # Return setup info for each agent
+            setup_info = {
+                "status": "setup_complete",
+                "base_commit": self.base_commit,
+                "agents": {},
+            }
+
+            for agent_id, worktree in self.worktrees.items():
+                setup_info["agents"][agent_id] = {
+                    "id": agent_id,
+                    "worktree_path": str(worktree.worktree_path),
+                    "scenario_prompt": self.scenario_prompt,
+                }
+
+            return setup_info
+
+        except WorktreeError as e:
+            print(f"✗ Worktree error: {e}")
+            return {
+                "status": "worktree_error",
+                "error": str(e),
+            }
+        except Exception as e:
+            print(f"✗ Unexpected error: {e}")
+            import traceback
+
+            traceback.print_exc()
+            return {
+                "status": "error",
+                "error": str(e),
+            }
+
+    def record_agent_completion(self, agent_id: str, completion_data: Dict[str, Any]) -> None:
+        """
+        특정 agent 가 작업을 완료했음을 전달받음.
+        해당 agent 의 결과 데이터를 agent_results 에 기록
+        """
+        self.agent_results[agent_id] = completion_data
+        print(f"Agent {agent_id} completion recorded")
+
+    def discover_worktrees(self) -> Dict[str, "Worktree"]:
+        """git 에 이미 존재하는 해당 scenario 의 worktree 를 찾아 agent A, B, C 등의 순서로 매핑"""
+        import subprocess
+
+        try:
+            result = subprocess.run(
+                ["git", "worktree", "list"],
+                cwd=str(self.repo_path),
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+
+            worktrees = {}
+            matching_paths = []
+
+            # Find all drill-* worktrees for this scenario
+            for line in result.stdout.strip().split('\n'):
+                if not line.strip():
+                    continue
+
+                path_str = line.split()[0]
+
+                # Worktree names are: drill-{scenario_id}-{index}-{pid}
+                if "drill-" in path_str and self.scenario_id in path_str:
+                    matching_paths.append(Path(path_str).resolve())
+
+            # Sort by path to get consistent ordering, assign to A, B, C, ...
+            matching_paths.sort()
+
+            for agent_idx, wt_path in enumerate(matching_paths):
+                if agent_idx >= self.num_agents:
+                    break
+
+                agent_id = chr(65 + agent_idx)
+                wt = Worktree(str(self.repo_path), f"{self.scenario_id}-{agent_idx}")
+                wt.worktree_path = wt_path
+                worktrees[agent_id] = wt
+
+            return worktrees
+        except Exception as e:
+            print(f"Warning: Failed to discover worktrees: {e}")
+            return {}
+
+    def measure_all(self) -> Dict[str, Any]:
+        """
+        모든 worktree의 결과 측정하고 agent 간 결과 비교 후 worktree 정리
+        """
+        # Try to discover worktrees if not already populated
+        if not self.worktrees:
+            self.worktrees = self.discover_worktrees()
+
+        if not self.worktrees or not self.base_commit:
+            return {
+                "status": "error",
+                "error": "Harness not properly initialized. Call setup_worktrees() first or specify existing worktrees.",
+            }
+
+        try:
+            print("Measuring all agent results...")
+            print("")
+
+            timestamp = datetime.now().isoformat()
+            all_evidence = {}
+
+            for agent_id, worktree in self.worktrees.items():
+                print(f"Measuring Agent {agent_id}...")
+
+                git_status = worktree.get_status()
+                diff = worktree.get_diff(self.base_commit)
+
+                verification = run_verification(worktree.worktree_path, self.repo_path)
+
+                completed = verification.build_success and verification.test_success
+
+                change_cost = parse_diff(diff) if diff.strip() else None
+
+                if change_cost:
+                    print(
+                        f"  Files: {change_cost.total_files_changed}, "
+                        f"Lines: +{change_cost.total_lines_added}"
+                    )
+                else:
+                    print("  No changes detected")
+
+                print(f"  Build: {'✓' if verification.build_success else '✗'}")
+                print(f"  Tests: {'✓' if verification.test_success else '✗'}")
+
+                evidence = ExperimentEvidence(
+                    scenario_id=self.scenario_id,
+                    scenario_name=self.scenario_name,
+                    timestamp=timestamp,
+                    base_commit=self.base_commit,
+                    completed=completed,
+                    change_cost=change_cost
+                    or {
+                        "total_files_changed": 0,
+                        "total_lines_added": 0,
+                        "total_lines_deleted": 0,
+                        "files_changed_list": [],
+                        "test_files_changed": 0,
+                        "unrelated_files_modified": 0,
+                    },
+                    verification=verification,
+                    diff=diff,
+                    git_status=git_status,
+                )
+
+                all_evidence[agent_id] = evidence
+                print("")
+
+            print("Saving individual results...")
+            for agent_id, evidence in all_evidence.items():
+                # Save diff file only (no JSON, no Markdown)
+                results_dir = self.results_dir / f"agent_{agent_id}"
+                results_dir.mkdir(parents=True, exist_ok=True)
+
+                file_timestamp = evidence.timestamp.replace(":", "-").replace(".", "-")
+                base = f"{evidence.scenario_id}_{file_timestamp}"
+                diff_path = results_dir / f"{base}.diff"
+                diff_path.write_text(evidence.diff)
+
+                print(f"  Agent {agent_id}: {diff_path.parent.name}/")
+
+            print("")
+            print("Analyzing results across agents...")
+
+            # Create comparison analysis
+            analyzer = ExperimentAnalyzer(self.scenario_id, self.scenario_name)
+
+            for agent_id, evidence in all_evidence.items():
+                metrics = AgentMetrics(
+                    agent_id=agent_id,
+                    files_changed=evidence.change_cost.total_files_changed
+                    if evidence.change_cost
+                    else 0,
+                    lines_added=evidence.change_cost.total_lines_added
+                    if evidence.change_cost
+                    else 0,
+                    lines_deleted=evidence.change_cost.total_lines_deleted
+                    if evidence.change_cost
+                    else 0,
+                    test_files_changed=evidence.change_cost.test_files_changed
+                    if evidence.change_cost
+                    else 0,
+                    build_success=evidence.verification.build_success,
+                    test_success=evidence.verification.test_success,
+                    files_list=[f.path for f in evidence.change_cost.files_changed_list]
+                    if evidence.change_cost
+                    else [],
+                    diff=evidence.diff,
+                )
+                analyzer.add_agent_result(agent_id, metrics)
+
+            comparison = analyzer.analyze()
+
+            print("  Comparison analysis complete (results displayed in terminal)")
+
+            print("")
+            print("Cleaning up worktrees...")
+            for agent_id, worktree in self.worktrees.items():
+                if worktree.cleanup():
+                    print(f"✓ Agent {agent_id} cleaned up")
+                else:
+                    print(f"⚠ Agent {agent_id} cleanup had warnings")
+
+            print("")
+
+            return {
+                "status": "success",
+                "scenario_id": self.scenario_id,
+                "num_agents": self.num_agents,
+                "agents": {
+                    agent_id: {
+                        "id": agent_id,
+                        "completed": evidence.completed,
+                        "files_changed": evidence.change_cost.total_files_changed
+                        if evidence.change_cost
+                        else 0,
+                        "lines_added": evidence.change_cost.total_lines_added
+                        if evidence.change_cost
+                        else 0,
+                        "lines_deleted": evidence.change_cost.total_lines_deleted
+                        if evidence.change_cost
+                        else 0,
+                        "build_success": evidence.verification.build_success,
+                        "test_success": evidence.verification.test_success,
+                    }
+                    for agent_id, evidence in all_evidence.items()
+                },
+                "base_commit": self.base_commit,
+                "timestamp": timestamp,
+            }
+
+        except Exception as e:
+            print(f"✗ Error during measurement: {e}")
+            import traceback
+
+            traceback.print_exc()
+            for worktree in self.worktrees.values():
+                worktree.cleanup()
+            return {
+                "status": "error",
+                "error": str(e),
+            }

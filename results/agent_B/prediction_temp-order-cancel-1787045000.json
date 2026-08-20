@@ -1,0 +1,30 @@
+{
+  "agent_id": "B",
+  "scenario_name": "주문 취소 기능 추가",
+  "timestamp": "2026-08-18T00:00:00+09:00",
+  "estimated_tokens": 48000,
+  "estimated_files_changed": 9,
+  "estimated_lines_added": 520,
+  "estimated_lines_deleted": 40,
+  "complexity_level": "medium",
+  "implementation_approach": "근거 우선: /Users/byurin/codeStress 에는 주문(order) 도메인이 존재하지 않는다. 저장소는 '변경 비용 측정 하네스'(Python CLI)이며 src/ 는 analysis.py, cli.py, harness.py, measurement.py, parallel.py, prediction.py, prediction_report.py, report.py, terminal_report.py, worktree.py 총 2607줄뿐이다. grep -ri 'order' 결과 실제 코드 히트는 시나리오 텍스트(src/scenarios.json 의 add-cancellation-reason)와 문서(docs/, MILESTONE_*.md)뿐이고, 도메인 엔티티/상태머신/서비스/리포지토리/HTTP 엔드포인트는 어디에도 없다. 유일한 주문 후보인 experiments/mini-order 는 React19+Vite 스켈레톤으로 src/ 에 main.tsx(11줄), index.css(1줄), vite-env.d.ts 만 있고 main.tsx 가 import 하는 '@/app' 모듈조차 부재하다(빌드 산출물 dist/assets/index-*.js 의 'Order'/'cancel' 히트는 react-dom 내부 심볼 cancelPendingCommit/cancelable 등 벤더 코드). 따라서 두 갈래 예측을 제시한다. (A) 하네스 자체에 주문 취소를 넣는 것은 도메인 부적합이며, 대응되는 실제 변경은 '취소 시나리오를 측정 대상으로 추가'하는 것: src/scenarios.json 에 order-cancel 시나리오 블록 추가(+35), 필요 시 src/cli.py 의 시나리오 선택/인자 처리와 src/prediction.py·prediction_report.py 의 필드 반영(+60). 이 경로면 파일 3~4개, 100줄 내외, low 복잡도. (B) 프롬프트 의도대로 experiments/mini-order 위에 주문 취소 기능을 신설하는 경우 도메인이 통째로 없으므로 '수정'이 아니라 '창작'이다: src/domain/order.ts 에 Order/OrderStatus(PENDING|PAID|SHIPPED|DELIVERED|CANCELLED) 타입과 canCancel(order) 가드 + cancel(order, reason) 순수 전이 함수, src/domain/orderPolicy.ts 에 취소 가능 조건(배송 시작 전, 이미 취소 아님, 결제 확정 후 환불 대상 여부), src/services/orderService.ts 에 취소 유스케이스(가드 → 상태 전이 → 환불 요청 → 재고 복원 → 이벤트 발행) 오케스트레이션, src/api/orders.ts 에 POST /orders/:id/cancel 핸들러(현재 서버 계층이 아예 없으므로 msw 또는 in-memory fetch mock 신설 필요), src/store/orderStore.ts 에 낙관적 업데이트/롤백, src/app.tsx 및 src/pages/OrderDetail.tsx 에 취소 버튼·확인 모달·사유 입력, src/domain/__tests__/order.test.ts 에 전이/가드 테스트. 영속화 지점이 없으므로 in-memory repository 인터페이스를 함께 정의해야 하며, 이것이 비용의 상당 부분이다. 아래 수치는 (B) 기준이다.",
+  "likely_files": [
+    "/Users/byurin/codeStress/experiments/mini-order/src/domain/order.ts (신규)",
+    "/Users/byurin/codeStress/experiments/mini-order/src/domain/orderPolicy.ts (신규: 취소 가능 조건)",
+    "/Users/byurin/codeStress/experiments/mini-order/src/services/orderService.ts (신규: 취소 유스케이스, 환불/재고 복원 오케스트레이션)",
+    "/Users/byurin/codeStress/experiments/mini-order/src/services/inventoryService.ts (신규: 재고 복원)",
+    "/Users/byurin/codeStress/experiments/mini-order/src/services/paymentService.ts (신규: 환불)",
+    "/Users/byurin/codeStress/experiments/mini-order/src/repository/orderRepository.ts (신규: 영속화 지점 부재로 in-memory 정의 필요)",
+    "/Users/byurin/codeStress/experiments/mini-order/src/api/orders.ts (신규: POST /orders/:id/cancel)",
+    "/Users/byurin/codeStress/experiments/mini-order/src/app.tsx (신규: main.tsx 가 import 하는 '@/app' 자체가 부재)",
+    "/Users/byurin/codeStress/experiments/mini-order/src/main.tsx (라우팅 연결 시 소폭 수정)",
+    "/Users/byurin/codeStress/src/scenarios.json (측정 시나리오로 등록할 경우)",
+    "/Users/byurin/codeStress/src/cli.py (시나리오 선택 경로)",
+    "/Users/byurin/codeStress/src/prediction_report.py (리포트 필드)"
+  ],
+  "coupling_observations": "하네스 쪽 결합도는 중간 수준이다. src/cli.py(538줄)가 harness/parallel/prediction/report 를 모두 직접 import 하는 허브라서 어떤 기능 추가든 cli.py 를 건드리게 된다. 반대로 src/prediction.py 의 AgentPrediction 은 dataclass + to_json 으로 자기완결적이라 필드 추가 파급이 작다. 주문 도메인 쪽은 결합도를 관찰할 코드가 아예 없다: experiments/mini-order/src/main.tsx 가 '@/app' 을 import 하는데 해당 파일이 존재하지 않아 현재 상태로는 tsc -b 조차 통과하지 않는다. 즉 '기존 결합을 뚫는 비용'이 아니라 '결합 구조를 처음 정하는 비용'이 든다.",
+  "duplication_observations": "직렬화 중복이 실재한다. src/prediction.py 의 to_json() 이 14개 필드를 수동 나열하고, 동일한 키 집합이 src/prediction_report.py 와 결과 산출물(results/agent_*/prediction_*.json) 에서 다시 반복된다. dataclasses.asdict 를 쓰지 않아 필드 추가 시 두세 군데를 동기화해야 한다. 리포트 계층도 report.py / terminal_report.py / prediction_report.py 로 3분화되어 포맷팅 로직이 유사 반복될 가능성이 높다. 주문 도메인에는 중복이 없다(코드가 없으므로).",
+  "responsibility_observations": "하네스는 계층 분리가 비교적 명확하다: worktree.py(격리), measurement.py(계측), analysis.py(해석), report.py/terminal_report.py(출력), parallel.py(다중 에이전트), prediction.py(읽기전용 예측). 다만 src/cli.py 538줄에 인자 파싱·확인 프롬프트(confirm_experiment)·오케스트레이션·결과 저장이 몰려 있어 God-module 경향이 있다. 주문 취소는 본질적으로 '가드(취소 가능 조건) / 상태 전이 / 부수효과(환불·재고 복원) / 알림'의 4책임인데, 참조할 기존 서비스 계층이 없으므로 이 경계를 구현자가 임의로 정하게 되고 에이전트별 산출물 편차가 커질 것이다(예측 비교 실험 관점에서는 오히려 신호가 큰 시나리오).",
+  "changeability_observations": "변경 용이성은 양극단이다. 하네스 측(시나리오 등록)은 src/scenarios.json 이 순수 데이터라 한 블록 추가로 끝나 매우 쉽다(low). 반면 mini-order 측은 도메인·서비스·영속화·API·UI가 전부 부재해 '취소만' 추가할 수 없고 주문 생성/조회 최소 골격을 함께 만들어야 하므로 실제 작업량이 예상보다 크다(medium~high). 또한 experiments/mini-order 는 자체 .git 을 가진 별도 저장소라 src/worktree.py 의 워크트리 격리와 base_commit 기반 측정이 상위 저장소 기준으로 동작할 경우 변경분이 집계되지 않을 위험이 있다(.gitignore/서브모듈 미등록 여부 확인 필요). 테스트 러너도 package.json 에 없어(scripts: dev/build/lint/preview) 테스트 추가 시 vitest 도입이 선행되며 이는 추가 비용이다.",
+  "analysis_notes": "read-only 분석. 실행한 조사: 디렉터리/라인수 집계, grep -ril 'order', src/scenarios.json 전문, src/prediction.py 상단, experiments/mini-order 파일 목록·package.json·main.tsx, dist 번들 심볼 확인. 어떤 파일도 생성/수정하지 않았고 빌드/테스트/git 변경 명령을 실행하지 않았다."
+}

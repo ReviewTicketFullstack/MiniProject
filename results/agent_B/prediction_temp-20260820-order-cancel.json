@@ -1,0 +1,25 @@
+{
+  "agent_id": "B",
+  "scenario_name": "주문 취소 기능 구현",
+  "timestamp": "2026-08-20T00:00:00+09:00",
+  "estimated_tokens": 46000,
+  "estimated_files_changed": 8,
+  "estimated_lines_added": 240,
+  "estimated_lines_deleted": 30,
+  "complexity_level": "medium",
+  "implementation_approach": "저장소 루트(src/)는 Python 기반 code-stress 하네스라 주문/결제 도메인이 없고, 실제 주문 도메인은 experiments/mini-order(React+TS, FSD 구조, mock API)에 존재하므로 그곳을 대상으로 예측한다. (1) entities/order/model.ts에 OrderStatus 타입('created'|'accepted'|'canceled' 등)과 Order.status 필드를 추가하고, 취소 가능 여부를 판정하는 canCancelOrder(order) 순수 함수를 entities/order에 신설(orderStatus.ts)한다. (2) src/api/orderApi.ts에 cancelOrder(orderId) 래퍼(POST /orders/:id/cancel 또는 DELETE /orders/:id)를 추가한다. (3) shared/api/client.ts의 mock 라우터에 취소 라우트를 추가하고 memoryOrders 배열의 해당 주문 상태를 갱신, 잘못된 상태 전이는 ApiError(errorCode: ORDER_ALREADY_CANCELED / ORDER_NOT_CANCELABLE)로 던진다. (4) shared/api/errorMessages.ts에 취소 관련 에러코드 메시지를 추가한다. (5) OrderHistoryPage.tsx에 '주문취소' 버튼과 낙관적/로딩 상태, 확인 UI, 성공 시 목록 갱신 및 entities/order/orderStorage.ts의 saveOrder/replaceOrderHistory를 통한 로컬 캐시 동기화를 넣는다. (6) entities/order/index.ts 배럴에 새 타입/함수 export 추가. 서비스 계층이 없으므로 취소 규칙은 entities의 순수 함수 + mock client(서버 역할) 양쪽에 최소 중복으로 배치하는 것이 현실적 선택이다.",
+  "likely_files": [
+    "/Users/byurin/codeStress/experiments/mini-order/src/entities/order/model.ts",
+    "/Users/byurin/codeStress/experiments/mini-order/src/entities/order/orderStatus.ts",
+    "/Users/byurin/codeStress/experiments/mini-order/src/entities/order/index.ts",
+    "/Users/byurin/codeStress/experiments/mini-order/src/entities/order/orderStorage.ts",
+    "/Users/byurin/codeStress/experiments/mini-order/src/api/orderApi.ts",
+    "/Users/byurin/codeStress/experiments/mini-order/src/shared/api/client.ts",
+    "/Users/byurin/codeStress/experiments/mini-order/src/shared/api/errorMessages.ts",
+    "/Users/byurin/codeStress/experiments/mini-order/src/pages/customer/OrderHistoryPage/OrderHistoryPage.tsx"
+  ],
+  "coupling_observations": "상태 개념 자체가 분산·빈약하다. Order에는 주문 상태 필드가 없고 reviewStatus('available'|'not_available'|'expired'|'done')만 존재해 리뷰 도메인 상태가 주문 모델에 직접 박혀 있다. 상태 전이 규칙은 shared/api/client.ts의 POST /orders 핸들러 안에 하드코딩되어 있고(72시간 데드라인 계산, reviewStatus 초기값 'available' 설정), 검증(store/menu 존재 확인)도 같은 함수 안에 있다. 즉 mock client.ts 한 파일이 라우팅+데이터 저장소(memoryOrders, nextOrderId)+도메인 규칙+에러 정책을 모두 겸한다(약 300줄, 파일 중 가장 큼). 반대편에서는 UI(HomePage/OrderHistoryPage)가 orderApi와 entities/order/orderStorage를 직접 호출하고 ApiError instanceof 분기와 사용자 메시지 문자열을 각 페이지에 중복 보유해, 취소 추가 시 client.ts와 페이지 두 곳을 동시에 건드려야 한다. errorMessages.ts는 정의만 있고 페이지에서 실제로 쓰이지 않아(client.ts만 import) 메시지 정책이 이중화되어 있다.",
+  "duplication_observations": "주문 생성/확정 같은 유사한 상태 변경 흐름은 아직 하나(주문 생성)뿐이라 로직 자체의 중복은 크지 않다. 다만 반복되는 패턴 중복이 뚜렷하다: (a) HomePage와 OrderHistoryPage 모두 isLoading/error/AbortController/`e instanceof ApiError ? e.message : 기본문구` 처리를 거의 같은 형태로 복제한다 — 취소 UI를 추가하면 세 번째 복제가 생긴다. (b) 주문 목록은 서버(memoryOrders)와 localStorage(review_ticket_orders) 두 곳에 이중 보관되며 replaceOrderHistory/getOrderHistory로 수동 동기화하므로, 취소 후에도 양쪽을 갱신하는 코드가 또 필요하다. (c) 에러 문자열이 client.ts 인라인 메시지와 errorMessages.ts에 중복 정의되어 있다. 반면 재사용 자산도 있어 request()/ApiError/Button/Card는 그대로 재사용 가능하다.",
+  "responsibility_observations": "FSD(app/pages/entities/shared/api) 폴더 규약은 잘 잡혀 있어 '어디에 넣을지'는 명확하지만, 실제 책임 분리는 얕다. entities/order는 타입 + localStorage + 포맷 유틸만 담당하고 도메인 규칙(취소 가능 여부, 상태 전이)을 담을 자리가 비어 있다. 서비스/유스케이스 계층(features 슬라이스)이 아예 없어 오케스트레이션이 전부 페이지 컴포넌트로 흘러들어간다(HomePage.handleOrder가 API 호출+에러메시지+네비게이션을 모두 수행). 저장소 계층은 orderStorage.ts(클라이언트 캐시)와 client.ts 내부 memoryOrders(서버 대역) 두 갈래로 나뉘어 소유권이 불분명하다. api/*.ts 래퍼는 얇고 일관적이어서 이 계층만은 책임이 깨끗하다.",
+  "changeability_observations": "전체 규모가 작아(mini-order src 약 1,043줄, 43파일) 변경 용이성은 중간 정도다. 유리한 점: 배럴 export와 @/ 경로 별칭이 정착돼 새 파일 추가 비용이 낮고, request()/ApiError 규약이 있어 취소 API 추가는 10줄 내외로 끝난다. 테스트가 전혀 없어 회귀 위험은 있으나 반대로 수정해야 할 테스트도 없다. 불리한 점: Order에 status가 없어 모델 확장이 필수이고, 이는 client.ts의 주문 생성 응답·orderStorage에 저장된 기존 캐시 데이터 형태와 OrderHistoryPage 렌더링까지 파급된다(현재 화면은 reviewStatus를 '상태'로 표시 중이라 표시 의미도 바꿔야 함). 또한 취소 규칙을 넣을 서비스 계층이 없어 구현자가 entities 순수 함수/mock client/페이지 중 어디에 둘지 선택해야 하고, 잘못 두면 client.ts 비대화가 가속된다. 결론적으로 '작아서 쉽지만 확장 지점이 준비돼 있지 않은' 상태로, 취소 하나는 반나절 규모지만 이후 상태 변경 기능이 늘면 features/서비스 계층 도입 리팩터링이 곧 필요해진다."
+}

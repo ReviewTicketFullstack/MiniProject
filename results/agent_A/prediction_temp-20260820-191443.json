@@ -1,0 +1,25 @@
+{
+  "agent_id": "A",
+  "scenario_name": "주문 취소 기능 구현",
+  "timestamp": "2026-08-20T19:14:43+09:00",
+  "estimated_tokens": 48000,
+  "estimated_files_changed": 6,
+  "estimated_lines_added": 210,
+  "estimated_lines_deleted": 20,
+  "complexity_level": "medium",
+  "implementation_approach": "주문 도메인은 experiments/mini-order(React 19 + TS, FSD 구조)에만 존재하며 백엔드는 src/shared/api/client.ts의 Mock 라우터가 대신한다. 현재 Order 모델에는 주문 상태(orderStatus)가 아예 없고 reviewStatus(available/not_available/expired/done)만 있어 '취소' 개념을 표현할 수 없다. 따라서 (1) entities/order/model.ts에 OrderStatus 타입('created'|'cancelled' 정도)과 Order.orderStatus, cancelledAt 필드 추가, (2) 상태 전이 규칙을 담을 신규 파일 entities/order/orderStatus.ts(canCancel(order): 이미 취소됨/리뷰 작성 완료/취소 가능 시간 경과 여부 판단)와 index.ts 재수출, (3) api/orderApi.ts에 cancelOrder(orderId) 추가(PATCH /orders/:id/cancel 또는 DELETE /orders/:id), (4) shared/api/client.ts Mock 라우터에 취소 경로 분기 + memoryOrders 상태 변경 + 실패 시 ApiError(errorCode: ORDER_ALREADY_CANCELLED / ORDER_NOT_CANCELLABLE), (5) shared/api/errorMessages.ts에 취소 관련 코드→메시지 매핑 추가, (6) OrderHistoryPage.tsx에 취소 버튼/확인 UI, 진행중 상태, 낙관적 또는 재조회 갱신, entities/order/orderStorage.ts 로컬 캐시 동기화(saveOrder 재사용 가능). 별도 서비스 계층이 없으므로 페이지 컴포넌트가 사실상 유스케이스 계층 역할을 하며, 취소 로직도 그쪽에 들어갈 가능성이 높다. 테스트 러너/테스트 파일이 저장소 전체에 없어(package.json에 test 스크립트 없음, vitest/jest 미설치) 테스트 작성은 범위에서 빠지거나 러너 도입 비용이 별도로 발생한다. 참고로 저장소 루트의 src/*.py는 code-stress 하네스 코드로 주문 도메인과 무관하며 변경 대상이 아니다.",
+  "likely_files": [
+    "experiments/mini-order/src/entities/order/model.ts",
+    "experiments/mini-order/src/entities/order/index.ts",
+    "experiments/mini-order/src/entities/order/orderStatus.ts",
+    "experiments/mini-order/src/entities/order/orderStorage.ts",
+    "experiments/mini-order/src/api/orderApi.ts",
+    "experiments/mini-order/src/shared/api/client.ts",
+    "experiments/mini-order/src/shared/api/errorMessages.ts",
+    "experiments/mini-order/src/pages/customer/OrderHistoryPage/OrderHistoryPage.tsx"
+  ],
+  "coupling_observations": "FSD 레이어(entities/api/pages/shared)와 @/ 별칭 덕분에 방향성 있는 의존은 비교적 깔끔하다. 다만 shared/api/client.ts(260줄)가 Mock 데이터 + 라우팅 + 도메인 규칙(리뷰 마감 72시간 계산, 주문 생성)까지 모두 들고 있고 entities/store, entities/menu, entities/order를 전부 import해 사실상 저수준 shared 레이어가 상위 도메인에 역의존하는 구조다. 취소 규칙도 여기에 또 스며들 가능성이 크다. 또 Order 타입이 client mock, orderApi, orderStorage, OrderHistoryPage에 걸쳐 공유되므로 필드 하나(orderStatus) 추가가 4~5개 파일에 파급된다. 인증은 request(auth:true)/token 모듈로 잘 격리돼 있어 취소 API 추가 시 추가 결합은 거의 없다.",
+  "duplication_observations": "HomePage와 OrderHistoryPage가 동일한 AbortController + then/catch/finally + `e instanceof ApiError ? e.message : 기본문구` 에러 처리 패턴을 통째로 복붙하고 있다. 취소 핸들러를 추가하면 이 패턴이 세 번째로 복제될 것이 거의 확실하다(공용 useAsync/useApiCall 훅 부재). 상태 문자열 리터럴도 model.ts의 union과 UI 표시(order.reviewStatus 원문 노출)에 중복 표현되어 있으며, 라벨 매핑 함수가 없어 취소 상태 표기 시 또 하드코딩될 소지가 있다. client.ts의 mock 라우팅은 path 정규식 분기가 반복 나열되는 형태라 취소 엔드포인트도 같은 방식으로 복제된다.",
+  "responsibility_observations": "서비스/유스케이스 계층이 존재하지 않는다. api/*.ts는 얇은 fetch 래퍼일 뿐이고, 도메인 규칙은 (a) mock client.ts 안(리뷰 마감 72시간), (b) entities/order/reviewTime.ts(시간 계산), (c) 페이지 컴포넌트(에러 분기·캐시 폴백)로 흩어져 있다. 특히 OrderHistoryPage가 조회·캐시 복구·에러 메시지 결정·렌더링을 동시에 담당해 취소까지 얹으면 책임 과부하가 커진다. 상태 전이(state machine) 개념 자체가 코드에 없어서(단순 union 타입 + 분기 없음) 취소 가능 여부 판정 로직을 놓을 자연스러운 자리를 새로 만들어야 한다. 영속화는 localStorage 사본(orderStorage.ts)과 서버 메모리 배열(memoryOrders) 이중 소스라 취소 후 두 소스 동기화 책임이 애매하다.",
+  "changeability_observations": "코드베이스가 매우 작고(mini-order TS/TSX 약 1,042줄) 타입이 잡혀 있어 물리적 변경 난이도는 낮은 편이다. Order에 optional 필드로 orderStatus를 추가하면 컴파일 파급을 최소화할 수 있고, entities/order/index.ts가 배럴 재수출을 하고 있어 신규 모듈 노출도 쉽다. 반면 위험 요소는: (1) 테스트가 전혀 없어(러너 미설치) 회귀 검증 수단이 없다 — 취소 후 리뷰 상태 처리 같은 규칙 변경을 안전하게 검증할 수 없다, (2) mock client가 서버 계약을 겸하고 있어 실제 백엔드 도입 시 취소 계약을 다시 정의해야 한다, (3) 취소와 리뷰 이벤트(reviewStatus/reviewDeadline, reviewApi.ts)의 상호작용 규칙이 미정의라 요구사항 해석 비용이 실제 구현 비용보다 클 수 있다. 종합적으로 medium — 파일 수는 적지만 상태 모델을 새로 세우는 설계 결정이 필요하다."
+}
