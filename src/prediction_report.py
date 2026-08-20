@@ -1,14 +1,4 @@
 """Terminal UI for prediction results.
-
-Renders the fixed CHANGE DRILL PREDICTION template: a boxed KEY METRICS table,
-an ESTIMATE COMPARISON block of ASCII bar charts, then CONSENSUS and
-DIFFERENCE. The structure is deterministic - the same sections appear in the
-same order for every run, whatever the agents reported.
-
-Every number rendered here is an ESTIMATE from static analysis. Nothing was
-built, executed, or measured. The long-form observations (implementation
-approach, coupling, duplication, responsibility, changeability) are
-deliberately kept out of this view - they stay in the saved JSON evidence.
 """
 
 from typing import Callable, List, Sequence

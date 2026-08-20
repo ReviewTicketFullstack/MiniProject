@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""CLI entry point for change-drill experiments.
-
-사용자 인터페이스: 시나리오 입력(--scenario-json), phase 구분(setup/measure/full), 병렬 모드 설정.
-두 harness 프로세스(setup → measure)를 순차로 호출하고 결과를 출력. 단일/병렬 모드 모두 지원.
-"""
 
 import argparse
 import json
@@ -14,12 +9,6 @@ from .harness import Harness
 
 
 def load_agent_predictions(results_dir: Path, scenario_id: str, scenario_name: str):
-    """Load prediction JSON evidence written by the read-only agents.
-
-    Looks for results/agent_<ID>/prediction_<scenario_id>.json and returns
-    ({agent_id: AgentPrediction}, [error strings]). Callers decide whether a
-    partial load is acceptable; nothing is printed here.
-    """
     from .prediction import AgentPrediction
 
     predictions = {}
@@ -63,11 +52,7 @@ def load_agent_predictions(results_dir: Path, scenario_id: str, scenario_name: s
 
 
 def run_predict_report(results_dir: Path, scenario_id: str, scenario_name: str) -> int:
-    """Render the deterministic prediction report from saved agent evidence.
-
-    Read-only: loads JSON, aggregates, prints. No agents, no worktrees, no
-    changes to the analysed repository.
-    """
+    """예측 보고서 렌더링"""
     from .prediction import PredictionOrchestrator
     from .prediction_report import print_prediction_result
 
@@ -106,7 +91,7 @@ def run_predict_report(results_dir: Path, scenario_id: str, scenario_name: str) 
 
 
 def confirm_experiment(repo_path: Path, scenario: dict) -> bool:
-    """Get user confirmation to proceed with experiment."""
+    """user permission 예측 진행"""
     print("=" * 60)
     print("EXPERIMENT PLAN")
     print("=" * 60)
@@ -162,7 +147,7 @@ def main():
     parser.add_argument(
         "--parallel",
         type=int,
-        default=1,
+        default=2,
         help="Number of parallel agents (1 = single agent, 2+ = parallel mode)",
     )
     parser.add_argument(
