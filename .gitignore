@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+out/scores.json
+out/judge_cache.json
+out/judge_queue.json
+out/
+Output/
